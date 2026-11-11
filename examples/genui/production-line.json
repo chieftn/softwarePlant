@@ -1,0 +1,100 @@
+{
+  "$schema": "../../schemas/production-line.schema.json",
+  "schemaVersion": "0.1",
+  "id": "genui",
+  "version": "0.1.0",
+  "product": {
+    "id": "genui",
+    "name": "genUI",
+    "businessProblem": "Enable LLM orchestrators to prescribe custom views and exchange information through custom data transforms expressed as LLM-generated JavaScript.",
+    "outputs": [
+      "A reusable generative UI library."
+    ]
+  },
+  "productionMethods": {
+    "guidance": [
+      "Keep genUI product code separate from the software factory framework.",
+      "Treat the product's consuming LLM orchestrators as distinct from the factory's workers.",
+      "Use the BOM to establish production inputs and scope; use this line's production methods to determine how work is performed.",
+      "Coordinate contribution PRs into an integration PR that remains draft during assembly and verification.",
+      "Human authorization controls product release to consumers.",
+      "Treat LLM-generated JavaScript as untrusted input. Resolve its execution boundary and permitted capabilities before implementing execution."
+    ],
+    "workers": [
+      {
+        "id": "foreman",
+        "occupation": "task-coordinator",
+        "role": "Decompose BOMs into work units, coordinate assignments and dependencies, track review findings and integration, and escalate blocked work or unresolved product decisions.",
+        "skillRefs": ["coordinate-production"],
+        "toolRefs": ["task-management", "source-control", "verification"]
+      },
+      {
+        "id": "coder",
+        "occupation": "coder",
+        "role": "Implement assigned genUI work units, add relevant tests, submit contribution PRs, and address review findings.",
+        "skillRefs": ["implement-work-unit"],
+        "toolRefs": ["workspace", "source-control", "verification"]
+      },
+      {
+        "id": "qa-reviewer",
+        "occupation": "quality-assurance-reviewer",
+        "role": "Assess contributions and integrated changes against the work's acceptance criteria and report findings with supporting evidence.",
+        "skillRefs": ["review-changes"],
+        "toolRefs": ["source-control", "verification"]
+      },
+      {
+        "id": "security-reviewer",
+        "occupation": "quality-assurance-reviewer",
+        "specialization": "Untrusted generated JavaScript and information-exchange boundaries.",
+        "role": "Review generated-code execution and data access against the agreed capability boundaries; report unsafe behavior and missing evidence.",
+        "skillRefs": ["review-generated-code-boundaries"],
+        "toolRefs": ["source-control", "verification"]
+      }
+    ],
+    "skills": [
+      {
+        "id": "coordinate-production",
+        "description": "Coordinate work from BOM intake through integrated PR readiness.",
+        "instructions": "Identify dependencies and acceptance criteria, assign bounded work, route findings back for correction, and collect integrated verification evidence before marking the integration PR ready for review."
+      },
+      {
+        "id": "implement-work-unit",
+        "description": "Implement and verify a bounded product change.",
+        "instructions": "Use the assigned work unit and agreed product contracts, implement the change, add focused tests, and submit a contribution PR with evidence. Escalate unresolved scope or contract decisions."
+      },
+      {
+        "id": "review-changes",
+        "description": "Evaluate contribution and integration correctness.",
+        "instructions": "Assess changes against acceptance criteria, inspect verification evidence, and report actionable findings. Review integrated behavior as well as individual contributions."
+      },
+      {
+        "id": "review-generated-code-boundaries",
+        "description": "Evaluate the boundary around LLM-generated JavaScript.",
+        "instructions": "Check generated code execution and information exchange against the agreed isolation and capability contracts. Identify unauthorized access, missing limits, and gaps in adversarial verification. Do not assume an execution model that the product has not defined."
+      }
+    ],
+    "tools": [
+      {
+        "id": "task-management",
+        "description": "Read production inputs and create, assign, and update work units."
+      },
+      {
+        "id": "source-control",
+        "description": "Access repository changes, contribution PRs, integration PRs, and their review and check results according to the worker's granted permissions."
+      },
+      {
+        "id": "workspace",
+        "description": "Read and modify product files in an assigned execution workspace."
+      },
+      {
+        "id": "verification",
+        "description": "Invoke permitted verification and inspect results and evidence."
+      }
+    ]
+  },
+  "openQuestions": [
+    "Does genUI own rendering and transform execution, or define a protocol implemented by a host?",
+    "What contract describes a prescribed view and its information exchange?",
+    "What execution boundary and capabilities apply to LLM-generated JavaScript?"
+  ]
+}
