@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "0.1",
+  "id": "hello-workbench-a",
+  "repository": "chieftn/productionOutput1",
+  "baseBranch": "main",
+  "instructions": "Add a small README describing this repository as a workbench execution pathfinder. Do not add product functionality.",
+  "pullRequestTitle": "Add workbench pathfinder README",
+  "acceptanceCriteria": [
+    "README.md identifies the repository as a workbench execution pathfinder.",
+    "No application behavior is introduced."
+  ],
+  "verificationCommands": [
+    {
+      "executable": "git",
+      "arguments": ["diff", "--check"]
+    }
+  ]
+}

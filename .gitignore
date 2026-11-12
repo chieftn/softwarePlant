@@ -1,0 +1,4 @@
+**/bin/
+**/obj/
+src/Workbench/artifacts/
+src/Workbench/**/data/

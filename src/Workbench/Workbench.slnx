@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="Workbench.Contracts/Workbench.Contracts.csproj" />
+  <Project Path="Workbench.Distributor/Workbench.Distributor.csproj" />
+  <Project Path="Workbench.Host/Workbench.Host.csproj" />
+  <Project Path="Workbench.Tests/Workbench.Tests.csproj" />
+  <Project Path="Workbench.Worker/Workbench.Worker.csproj" />
+</Solution>

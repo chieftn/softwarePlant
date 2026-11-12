@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <ProjectReference Include="..\Workbench.Host\Workbench.Host.csproj" />
+    <ProjectReference Include="..\Workbench.Distributor\Workbench.Distributor.csproj" />
+    <ProjectReference Include="..\Workbench.Worker\Workbench.Worker.csproj" />
+    <None Include="..\..\..\examples\genui\production-line.json" Link="production-line.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

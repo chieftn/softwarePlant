@@ -32,3 +32,11 @@ Component boundaries follow these responsibilities and interactions. The mapping
 ## System Context
 
 ![Software Factory system context diagram](software-factory-context.png)
+
+## Initial Plant Execution Slice
+
+The [plant model](plant-model.md) defines the selected approach: a **.NET Workbench Host** on each VM-based workbench, using **Microsoft Agent Framework** and its **GitHub Copilot SDK integration** to run coding workers.
+
+The coordinator delivers assignments and tracks execution. Hosts connect outbound, prepare separate workspaces, configure worker instructions and permissions, and report results. MAF supplies the agent abstraction and broader workflow facilities; Copilot owns each coding worker's reasoning/tool loop.
+
+The initial [workbench implementation](../src/Workbench/README.md) supplies a persistent work distributor, an outbound Windows daemon connection, a WSL MAF/Copilot worker, assignment contracts, and publishing/deployment scripts. The objective is two devboxes producing independent PRs in `chieftn/productionOutput1`. Production workflows, service installation, and durable production hosting remain open.
