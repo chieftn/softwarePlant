@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.17.1" />
     <ProjectReference Include="..\Workbench.Contracts\Workbench.Contracts.csproj" />
   </ItemGroup>
 </Project>

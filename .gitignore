@@ -1,4 +1,5 @@
 **/bin/
 **/obj/
-src/Workbench/artifacts/
+src/Workbench/artifacts*/
+src/Workbench/workbench-*.zip
 src/Workbench/**/data/

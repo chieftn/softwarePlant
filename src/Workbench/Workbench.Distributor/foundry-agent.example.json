@@ -1,0 +1,21 @@
+{
+  "name": "plant-coordinator",
+  "definition": {
+    "kind": "hosted",
+    "container_configuration": {
+      "image": "<registry>.azurecr.io/plant-coordinator:<immutable-tag>"
+    },
+    "cpu": "1",
+    "memory": "2Gi",
+    "protocol_versions": [
+      { "protocol": "invocations", "version": "2.0.0" }
+    ],
+    "environment_variables": {
+      "Coordinator__Mode": "Foundry",
+      "Coordinator__StoreName": "plant-main",
+      "Coordinator__Operators__0": "<operator-platform-caller-id>",
+      "Coordinator__Workbenches__box-one": "<first-daemon-platform-caller-id>",
+      "Coordinator__Workbenches__box-two": "<second-daemon-platform-caller-id>"
+    }
+  }
+}

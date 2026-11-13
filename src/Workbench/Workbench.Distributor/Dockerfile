@@ -8,9 +8,8 @@ RUN dotnet publish Workbench.Distributor/Workbench.Distributor.csproj -c Release
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /app .
-ENV ASPNETCORE_HTTP_PORTS=8080
-ENV Distributor__Database=/data/distributor.db
-RUN mkdir -p /data && chown $APP_UID /data
+ENV PORT=8088
+ENV Coordinator__Mode=Foundry
 USER $APP_UID
-EXPOSE 8080
+EXPOSE 8088
 ENTRYPOINT ["dotnet", "Workbench.Distributor.dll"]

@@ -1,3 +1,3 @@
 using Workbench.Distributor;
 
-await DistributorApplication.Build(args).RunAsync();
+await (await DistributorApplication.BuildAsync(args)).RunAsync();

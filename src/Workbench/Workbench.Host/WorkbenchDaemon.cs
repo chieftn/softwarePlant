@@ -32,7 +32,16 @@ public sealed class WorkbenchDaemon(
             FileAccess.ReadWrite, FileShare.None);
         var pendingPath = Path.Combine(root, "pending.json");
         var intentPath = Path.Combine(root, "claim-intent.json");
-        Console.WriteLine($"Workbench {workbench} connecting to distributor; one assignment at a time.");
+        var capabilities = new List<string> { "wsl", "copilot-sdk", "workspace", "verification", "source-control" };
+        if (policy.AllowShellExecution)
+            capabilities.Add("agent-shell");
+        if (policy.PublishPullRequest)
+            capabilities.Add("publish-pr");
+        var registration = await RetryAsync(() => client.RegisterAsync(workbench,
+            new(Environment.MachineName, capabilities.ToArray()), cancellationToken), cancellationToken);
+        if (registration.WorkbenchId != workbench)
+            throw new InvalidDataException("Coordinator registered the wrong workbench.");
+        Console.WriteLine($"Workbench {workbench} registered; one assignment at a time.");
         while (!cancellationToken.IsCancellationRequested)
         {
             WorkClaim? claim;

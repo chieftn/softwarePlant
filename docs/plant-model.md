@@ -12,11 +12,12 @@ The initial plant uses two existing Windows devboxes with WSL. Each devbox serve
 |---|---|
 | **.NET** | Application runtime for the workbench host and Microsoft Agent Framework integration. |
 | **Microsoft Agent Framework (MAF)** | Common agent abstraction and workflow facilities for composing workers and coordinating production. |
+| **Microsoft Foundry Hosted Agents** | Selected managed host for the central coordinator, with Invocations endpoints, platform identity, and durable application state. |
 | **GitHub Copilot SDK and its MAF integration** | Coding-agent execution, including the reasoning/tool loop and access to coding tools under an explicit permission policy. |
 | **VM-based workbenches** | Equipped execution environments containing the repository workspace, language runtimes, tools, and worker runtime. |
 | **GitHub** | Source control, branches, PRs, and associated review and verification results. GitHub Actions is not the plant's dispatch mechanism. |
 
-The initial [workbench implementation](../src/Workbench/README.md) supplies a work distributor, a Windows host with an outbound daemon connection, and a WSL coding worker. It is not a deployed plant or a complete production coordinator.
+The initial [workbench implementation](../src/Workbench/README.md) supplies the central coordinator's registration and distribution foundation, a Windows host with an outbound daemon connection, and a WSL coding worker. Azure deployment and production workflows remain separate from this implemented execution foundation.
 
 ## Core Concepts
 
@@ -77,11 +78,11 @@ The distributed execution path is:
 
 MAF workflows organize production steps and handoffs. A Foreman worker can reason about decomposition, assignments, and corrective work. Ordinary application code validates those decisions, records execution state, and delivers assignments.
 
-The agent abstraction does not automatically distribute execution across devboxes. The [work distributor](../src/Workbench/Workbench.Distributor/README.md) implements that connection using outbound HTTP polling, distinct operator/workbench bearer credentials, and SQLite-persisted assignments and claims. Each assignment targets a configured workbench. Claims and results survive service restarts; a missed heartbeat marks work for attention without automatically replaying it.
+The agent abstraction does not automatically distribute execution across devboxes. The [central coordinator](../src/Workbench/Workbench.Distributor/README.md) implements that connection through Foundry Invocations and Entra-authenticated outbound daemon polling. Authorized workbenches register their machine identity and capabilities. The Foundry durable state store holds registrations, presence, assignments, claims, and results; conditional writes protect ownership across coordinator instances and restarts. Each assignment targets a registered workbench. A missed heartbeat marks work for attention without automatically replaying it.
 
 The first assignments are submitted manually. They exercise the same workbench execution boundary that production workflows use, without requiring a Foreman or a complete workflow engine first.
 
-Durable production execution also requires an explicit persistence and hosting choice. MAF's Durable Extension is an option to evaluate, not an adopted dependency or an automatic property of using MAF.
+Foundry hosting and application persistence do not automatically make future MAF production workflows recoverable. Workflow checkpoint/resume and external-effect reconciliation remain explicit requirements. MAF's Durable Extension is an option to evaluate, not an adopted dependency or an automatic property of using MAF.
 
 ## First Execution Objective
 
@@ -101,7 +102,7 @@ The workbenches use separate checkouts and branches. They do not merge each othe
 
 - Production workflow orchestration, review routing, and automatic workbench selection.
 - Service installation, startup, upgrades, and rollback on the devboxes.
-- Scale-out persistence and managed hosting, including a Foundry hosting adapter if selected.
+- Deployed Foundry identity/recovery verification, workflow durability, and archival beyond the initial small-plant state index.
 
 ## References
 
@@ -109,3 +110,5 @@ The workbenches use separate checkouts and branches. They do not merge each othe
 - [GitHub Copilot SDK](https://github.com/github/copilot-sdk)
 - [Copilot SDK integration with Microsoft Agent Framework](https://docs.github.com/en/copilot/how-tos/copilot-sdk/integrations/microsoft-agent-framework)
 - [Microsoft Agent Framework Durable Extension](https://learn.microsoft.com/en-us/agent-framework/hosting/durable-extension)
+- [Foundry hosted agent runtime contract](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agent-contract)
+- [Foundry durable state store](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/agent-state-store)

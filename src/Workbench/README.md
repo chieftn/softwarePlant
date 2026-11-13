@@ -1,13 +1,13 @@
 # Workbench
 
-A Windows .NET host runs a coding worker inside WSL. The worker uses Microsoft Agent Framework's Copilot integration. A work distributor delivers explicit assignments to named workbench daemons over outbound HTTP connections; GitHub Actions is not the dispatch mechanism.
+A Windows .NET host runs a coding worker inside WSL. The worker uses Microsoft Agent Framework's Copilot integration. A Foundry-hosted plant coordinator registers workbenches and delivers explicit assignments through outbound daemon connections; GitHub Actions is not the dispatch mechanism.
 
 ## Layout
 
 | Project | Responsibility |
 |---|---|
 | `Workbench.Contracts` | Assignment, selected production methods, progress/result messages, and process execution. |
-| `Workbench.Distributor` | Container-hosted HTTP service; authenticates operators/workbenches and persists assignments, claims, heartbeats, and results in SQLite. |
+| `Workbench.Distributor` | Foundry-hosted coordinator; registers authorized machines and persists ownership, presence, and results using Foundry's durable state store. |
 | `Workbench.Host` | Windows entry point; launches the Linux worker through `wsl.exe`, streams events, and collects artifacts. Its daemon mode polls the distributor; submission mode sends assignments without launching a worker. |
 | `Workbench.Worker` | Linux entry point; creates a checkout/branch, runs the MAF/Copilot agent, verifies changes, and optionally publishes a PR. |
 | `Workbench.Tests` | Contract, orchestration, permission-decision, and failure-path checks without live LLM or GitHub calls. |
@@ -74,13 +74,15 @@ Use a distinct assignment ID on each devbox. The ID determines the workspace and
 
 ## Distribute Assignments
 
-See [distributor operation](Workbench.Distributor/README.md) for container configuration, authentication, API contracts, and interruption recovery.
+See [coordinator operation](Workbench.Distributor/README.md) for Foundry configuration, identity registration, invocation contracts, and interruption recovery.
 
-On each devbox, provision `WORKBENCH_TOKEN` through the process environment. Its value must match that workbench's configured distributor token. Using the paths printed by deployment:
+On each devbox, provision a distinct Microsoft Entra application identity usable by Azure Identity, authorize it in Foundry and the coordinator, and create/reuse a hosted session. No shared distributor token is used in Foundry mode. Using the paths printed by deployment:
 
 ```powershell
 & "$env:LOCALAPPDATA\Workbench\Workbench.Host.exe" `
-    --daemon --distributor "https://<distributor-host>" --workbench box-one `
+    --daemon --foundry --foundry-session "<stable-hosted-session-id>" `
+    --distributor "https://<account>.services.ai.azure.com/api/projects/<project>/agents/plant-coordinator/endpoint/protocols/invocations" `
+    --workbench box-one `
     --state "$env:LOCALAPPDATA\Workbench\daemon" `
     --repositories "chieftn/productionOutput1" `
     --distro Ubuntu `
@@ -90,19 +92,21 @@ On each devbox, provision `WORKBENCH_TOKEN` through the process environment. Its
     --allow-shell --publish-pr
 ```
 
-Each daemon runs one assignment at a time. Use a unique workbench ID/token and a persistent local state directory on each devbox. Do not copy daemon state between machines or run multiple instances under one identity. The repository allowlist and permission flags are local limits: a remote request cannot enable agent shell access or PR publication unless the daemon permits it. Assignment verification commands still execute as trusted operator-supplied code, independently of the agent shell flag.
+The daemon registers its machine/capability metadata before polling. Each daemon runs one assignment at a time. Use a unique workbench identity and a persistent local state directory on each devbox. Do not copy daemon state between machines or run multiple instances under one identity. The repository allowlist and permission flags are local limits: a remote request cannot enable agent shell access or PR publication unless the daemon permits it. Assignment verification commands still execute as trusted operator-supplied code, independently of the agent shell flag.
 
-On the submitting machine, provision `DISTRIBUTOR_ADMIN_TOKEN` and submit an assignment:
+On the submitting machine, authenticate through Azure Identity under an approved operator identity, then submit to an already registered workbench:
 
 ```powershell
 & "$env:LOCALAPPDATA\Workbench\Workbench.Host.exe" `
-    --submit --distributor "https://<distributor-host>" --workbench box-one `
+    --submit --foundry --foundry-session "<operator-hosted-session-id>" `
+    --distributor "https://<account>.services.ai.azure.com/api/projects/<project>/agents/plant-coordinator/endpoint/protocols/invocations" `
+    --workbench box-one `
     --assignment .\src\Workbench\examples\assignment.json `
     --line .\examples\genui\production-line.json `
     --allow-shell --publish-pr
 ```
 
-Submission snapshots the selected production methods, model, timeout, and requested permissions. It returns an assignment-state receipt. It does not execute locally. `--worker`, `--model`, and `--timeout-seconds` work as in manual mode. Each additional assignment needs a new ID. HTTP is allowed only for a loopback distributor URL during local development; remote daemons require HTTPS.
+Submission snapshots the selected production methods, model, timeout, and requested permissions. It returns an assignment-state receipt. It does not execute locally. `--worker`, `--model`, and `--timeout-seconds` work as in manual mode. Each additional assignment needs a new ID. Use `--invoke <JSON-file>` with the same connection options for `identity`, `workbenches`, `get`, or `resolve` operations. HTTP and local tokens are allowed only on loopback in explicit local development mode.
 
 Daemon mode is a foreground long-running process, not a Windows service installation. Ctrl+C requests cooperative cancellation. Use an operator-managed process supervisor for unattended startup; automatic service registration is not implemented.
 

@@ -1,97 +1,119 @@
-# Work Distributor
+# Plant Coordinator
 
-The distributor accepts explicit assignments addressed to configured workbenches. Windows hosts poll it outbound and execute through the existing WSL MAF/Copilot worker. The distributor contains no LLM, planner, reviewer, or production workflow engine.
+`Workbench.Distributor` hosts the plant's registration and distribution foundation in Microsoft Foundry Hosted Agents. It uses the official .NET AgentServer Invocations adapter and Foundry durable state store. The existing project name remains to preserve build paths.
 
-## Host
-
-Build from the `src\Workbench` directory:
-
-```powershell
-docker build -f .\Workbench.Distributor\Dockerfile -t workbench-distributor .
+```text
+Windows workbench daemons
+    | outbound HTTPS + Microsoft Entra authentication
+Foundry Invocations endpoint
+    | registration, assignment ownership, heartbeats, results
+Foundry durable state store
 ```
 
-Configure these environment variables through your deployment's secret/configuration mechanism:
+The WSL MAF/Copilot workers still execute on the devboxes. The coordinator performs ordinary application operations without requiring a model call. MAF production planning, review workflows, automatic workbench selection, and product release remain outside this slice. No unused MAF workflow engine or second service is introduced.
+
+## Foundry Hosting
+
+Build from `src\Workbench`:
+
+```powershell
+docker build --platform linux/amd64 -f .\Workbench.Distributor\Dockerfile -t plant-coordinator .
+```
+
+The image defaults to Foundry mode, serves HTTP on the platform's `PORT` (8088 by default), exposes `GET /readiness`, and implements `POST /invocations`. The official host handles request context, diagnostics, and graceful shutdown. Mode selection fails closed: Foundry mode requires the platform environment; local mode is refused inside Foundry.
+
+Use [foundry-agent.example.json](foundry-agent.example.json) as the create-agent request body after replacing its placeholders. It declares Invocations container protocol **2.0.0**, not a conversational Responses endpoint. Follow [Microsoft's deployment procedure](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent) to push an immutable image tag, grant the project identity registry-pull access, create the agent, and wait for an active version. This repository does not provision Azure resources.
+
+Configure these non-secret values per agent version:
 
 | Variable | Meaning |
 |---|---|
-| `Distributor__AdminToken` | Operator credential for submission, inspection, and explicit recovery. |
-| `Distributor__Workbenches__box-one` | Unique daemon credential for `box-one`. |
-| `Distributor__Workbenches__box-two` | Unique daemon credential for `box-two`. |
-| `Distributor__Database` | SQLite file; defaults to `/data/distributor.db` in the container. |
+| `Coordinator__Mode` | `Foundry` in Azure. |
+| `Coordinator__StoreName` | Stable, plant-specific name, for example `plant-main`. Keep the same agent and store name across versions. |
+| `Coordinator__Operators__0` | Platform caller ID authorized to submit, inspect, and resolve work. Add indexed entries for other operators. |
+| `Coordinator__Workbenches__box-one` | Platform caller ID pre-authorized to register and operate `box-one`. |
+| `Coordinator__Workbenches__box-two` | A separate platform caller ID for `box-two`. |
 
-Use distinct cryptographically random tokens of at least 32 characters. Do not commit credentials or put them in assignment files, images, or command-line arguments. The daemon receives only its own token, not the operator token.
+These are the opaque caller IDs delivered by Foundry in `x-agent-user-id`; do not assume they equal an application client ID or a directory object ID. `{"operation":"identity"}` returns the authenticated caller ID. For initial discovery, deploy with no operator/workbench mappings: authenticated callers can identify themselves but cannot access plant operations. Then create a version with the approved mappings. Workbench mappings without an operator are rejected.
 
-For local development, set the configuration environment variables in the current shell, then:
+Foundry authenticates callers using Entra. Grant consumers appropriate endpoint access, such as Foundry Agent Consumer, and separately configure the application's allowlists above. Use distinct application identities for unattended devbox daemons; authenticating both under the same developer account does not identify two machines. The coordinator trusts only Foundry-generated caller/call headers, not `x-client-*` identity assertions or IDs in the request body. Do not expose the container directly outside Foundry: the platform gateway is the authentication boundary.
 
-```powershell
-docker volume create workbench-distributor-data
-docker run --rm --name workbench-distributor `
-    -p 127.0.0.1:8080:8080 `
-    --mount source=workbench-distributor-data,target=/data `
-    --env Distributor__AdminToken `
-    --env Distributor__Workbenches__box-one `
-    --env Distributor__Workbenches__box-two `
-    workbench-distributor
-```
+The running coordinator uses its hosted agent identity via Azure Identity to access Foundry storage. The project identity used for image pulls is different. No operator tokens, Git credentials, or Copilot credentials belong in the hosted image. Caller token refresh on Windows uses Azure Identity; provision credentials outside task files, for example a dedicated application with certificate authentication.
 
-The image runs as the .NET non-root application user and prepares a writable `/data` directory. A bind-mounted directory must grant that user write access. Keep the database and WAL files together on persistent local storage. Do not use a network share or multiple service replicas against this SQLite file. The named volume preserves state when the container is replaced.
+## Registration and Invocation Contract
 
-For two remote devboxes, deploy one service instance behind an authenticated-network boundary and HTTPS ingress, for example on an Azure VM/container host with persistent local disk. Check the hosting service's filesystem guarantees before choosing its volume: this SQLite implementation requires local filesystem locking and is not a scale-out database. The application authenticates API requests with bearer tokens; TLS termination, secret storage/rotation, database backups, and network restrictions belong to deployment. A token/configuration change requires a service restart.
+The [Windows host](../README.md#distribute-assignments) uses `--foundry` with the full callable Invocations URL and a stable `--foundry-session` ID. Create/reuse a hosted session using Foundry's session tooling and keep its ID in daemon configuration. Do not create a new sandbox for every poll. Separate callers can use separate sessions; all authorized sessions share the plant store. Frequent polling keeps session compute active and incurs hosting charges.
 
-You can run without Docker using .NET 10:
+On startup a daemon registers its machine name and supported capabilities under its pre-authorized identity. Registration persists the identity binding and updates metadata on reconnect; another identity cannot take over an existing record. Changing a registered identity requires an explicit future rebind procedure, not just changing configuration. Reported capabilities describe the host; they grant no permissions and are not installed-tool attestation. Local repository and execution limits remain authoritative.
 
-```powershell
-dotnet run --project .\Workbench.Distributor -- --urls http://127.0.0.1:8080
-```
-
-Set the same environment variables first. Outside the container, the default database path is `data/distributor.db`, relative to the process working directory. `GET /healthz` is an unauthenticated liveness endpoint; it is not a workbench readiness signal.
-
-This slice implements container hosting, not a Foundry Hosted Agents adapter. Foundry requires its hosting protocol and lifecycle integration; do not assume this HTTP service can be deployed there unchanged. The distribution contracts do not depend on MAF or Foundry.
-
-## Protocol
-
-All endpoints other than `/healthz` require `Authorization: Bearer <token>`. JSON uses the shared `Workbench.Contracts` types. The maximum HTTP request body is 8 MiB.
-
-| Endpoint | Credential | Behavior |
-|---|---|---|
-| `POST /assignments` | Operator | Accept a `DispatchRequest` containing `workbenchId` and a complete `WorkerRequest` under `request`; return 201 with state. |
-| `GET /assignments/{id}` | Operator or owning workbench | Read state, last heartbeat, and terminal result. |
-| `POST /workbenches/{id}/claim` | That workbench | Send `{"claimId":"<GUID in N format>"}`; return a `WorkClaim`, or 204 when no work is queued. |
-| `POST /workbenches/{id}/assignments/{assignment}/{claim}/heartbeat` | That workbench | Refresh the active claim; return 204. |
-| `POST /workbenches/{id}/assignments/{assignment}/{claim}/result` | That workbench | Send a `WorkerResult`; identical completion retries return 204. |
-| `POST /assignments/{id}/resolve` | Operator | Record a reconciled `WorkerResult` for an already claimed assignment. |
-
-The [host submission command](../README.md#distribute-assignments) builds a snapshot using the existing production-line loader. Future production workflows can submit that same contract directly.
-
-Workbench IDs are lowercase letters, digits, and hyphens, up to 63 characters. IDs and credentials are preconfigured; dynamic registration, capability discovery, and automatic workbench selection are not implemented. Assignment IDs are globally unique in the distributor. Reusing an ID returns 409 even when its previous run finished. A submission connection failure can occur after acceptance: inspect that ID before deciding what to submit next.
-
-A workbench can hold one unresolved claim. Additional assignments wait in submission order. A retried claim with the same persisted claim ID returns the same assignment; a different claim ID while work is unresolved returns 409. This covers a lost claim response without issuing a second task.
-
-## Recovery
-
-States are `queued`, `running`, `attention`, `succeeded`, `failed`, and `cancelled`. Heartbeats run every 20 seconds while executing. After 90 seconds without one, an unresolved assignment reads as `attention`. This is a warning, not a claim expiry. Work is never automatically returned to the queue or transferred to another workbench.
-
-The daemon keeps a local journal under its `--state` directory and artifacts under `--output`. Keep both persistent. A process-local file lock prevents concurrent daemons sharing the same state directory.
-
-On restart:
-
-- A saved claim intent retries that same claim request.
-- A saved terminal result is reported again without invoking the worker.
-- An assignment already completed or resolved at the distributor clears the pending local journal.
-- A pending claim without a complete result stops startup. It does not run the assignment again.
-
-For interrupted work, inspect the Windows artifacts, WSL processes/workspace, Git branch, and remote PR. Stop or wait for any remaining owned execution before releasing its slot. Killing the Windows host does not prove that Linux descendants stopped; the worker's Linux timeout remains the outer bound.
-
-If a complete `result.json` exists at the host's expected output path, restart the daemon to report it. Otherwise, use the operator credential to post a reconciled terminal result to `/assignments/{id}/resolve`, then restart the daemon. A failed/cancelled result must explain what happened in `error`; a successful result for a publication request must include the inspected PR URL. For example, after inspection:
+Every request to `/invocations` contains a `CoordinatorInvocation`, for example:
 
 ```json
 {
-  "assignmentId": "example-task",
-  "status": "failed",
-  "error": "Operator confirmed execution stopped; inspected the branch and PR state. No automatic replay is authorized."
+  "schemaVersion": "0.1",
+  "operation": "get",
+  "assignmentId": "example-task"
 }
 ```
 
-Do not resolve an assignment merely to clear the queue. An operator result is an explicit assertion, not independent verification. Existing terminal results cannot be overwritten. If correction requires more coding, submit a separately identified assignment after inspecting existing effects.
+| Operation | Caller | Additional fields |
+|---|---|---|
+| `identity` | Authenticated endpoint consumer | None; returns the platform caller ID. |
+| `register` | Owning workbench | `workbenchId`, `registration` with `machineName` and `capabilities`. |
+| `workbenches` | Operator | None; returns registration, last seen, presence, and active assignment. |
+| `submit` | Operator | `dispatch` containing `workbenchId` and a complete `WorkerRequest` under `request`. Target must already be registered. |
+| `get` | Operator or owning workbench | `assignmentId`. |
+| `claim` | Owning workbench | `workbenchId`, persisted `claimId` in GUID N format. |
+| `heartbeat` | Owning workbench | `workbenchId`, `assignmentId`, `claimId`. |
+| `result` | Owning workbench | The same identifiers plus terminal `result`. |
+| `resolve` | Operator | `assignmentId`, reconciled terminal `result`. |
 
-Results and database contents can include repository code and task evidence. Restrict access, provision retention and backups, and keep model/Git credentials on the workbenches. Verification commands are executable operator inputs: possession of the operator token authorizes code execution within the daemon's configured environment. Repository allowlisting is not an OS sandbox.
+Replies use `CoordinatorReply` with the applicable `assignment`, `claim`, `workbench`, `workbenches`, or `principalId`. An empty claim reply means no queued work. Rejected operations use HTTP 400, 403, 404, or 409; storage failures use 503. Requests are limited to 1 MiB. This replaces the earlier standalone REST routes; update the coordinator and hosts together.
+
+Presence is refreshed on registration, polling, assignment heartbeats, and completion. After 90 seconds without contact, a workbench reads as `offline`; an unresolved assignment without heartbeats reads as `attention`. Neither condition releases a claim.
+
+## Persistence and Recovery
+
+The store is **shared across callers** (`userIsolation: false`) because operators and machines must coordinate on the same records. The application enforces access. It sets item expiration to **never** and rejects an existing store with conflicting isolation/expiration settings rather than silently accepting unsafe retention.
+
+A compact plant index contains registrations and assignment ownership. Each mutation uses create-only writes or an exact ETag precondition. Competing instances reload and retry only the state transition, never a coding run or PR operation. A single conditional update protects the one-active-assignment-per-workbench rule without requiring a cross-record transaction.
+
+Assignment requests and results are separate immutable items written before the index references them. Interrupted writes can leave unreferenced items; no automatic deletion is performed. Retried operations verify the original payload. A failed submission before its index commit can reserve its request ID; retry with the same payload. Once indexed, reusing an assignment ID returns 409. A lost submission acknowledgement requires inspecting that ID first.
+
+Each payload and the plant index has a 900 KiB safety limit below Foundry's 1 MB item limit. Large evidence belongs in external artifact storage; automatic artifact offload and index archival are not implemented. Oversized writes fail explicitly without completing or releasing the assignment. The initial single-index consistency design is for a small plant, not a high-throughput scheduler.
+
+Claims are never automatically expired or reassigned. Repeating the same persisted claim ID returns the same active assignment. A different claim while work is unresolved, or reuse of a completed claim ID, returns 409. Terminal completion retries are idempotent; a different result cannot overwrite the first.
+
+Daemon journals and WSL artifacts remain essential. A pending claim with no complete saved result stops daemon startup rather than rerunning coding work. Inspect WSL processes, the checkout, branch, and remote PR before resolving it. Kill or wait for remaining execution before freeing its slot. A host failure does not prove that Linux descendants stopped.
+
+To resolve an inspected interruption, invoke:
+
+```json
+{
+  "operation": "resolve",
+  "assignmentId": "example-task",
+  "result": {
+    "assignmentId": "example-task",
+    "status": "failed",
+    "error": "Operator confirmed execution stopped and inspected branch/PR state. No replay is authorized."
+  }
+}
+```
+
+Then restart the daemon. A saved terminal result is reported without invoking the worker; a remotely resolved assignment clears the pending local journal. Success for a publication request requires an inspected PR URL. Operator resolution is an explicit assertion, not independent verification.
+
+## Local Development
+
+Local mode uses the **same Invocations adapter and SDK state-store API**, with the SDK's file-backed implementation. It is loopback-only, uses distinct local bearer tokens, and rejects simulated platform identity headers. It does not validate real Foundry identity propagation or hosted durability.
+
+Set `Coordinator__Mode=Local`, `Coordinator__StoreName=plant-local`, and `AGENTSERVER_STATE_ROOT` to a dedicated persistent local directory. Provision `Coordinator__Local__OperatorToken` and `Coordinator__Local__Workbenches__box-one` through the process environment with distinct random values of at least 32 characters. Then, from `src\Workbench`:
+
+```powershell
+dotnet run --project .\Workbench.Distributor -- --urls http://127.0.0.1:8088
+```
+
+Run the daemon without `--foundry`, using `--distributor http://127.0.0.1:8088` and its matching `WORKBENCH_TOKEN`. Local operator commands use `DISTRIBUTOR_ADMIN_TOKEN`. Local credentials are rejected for remote URLs. The SDK's local files are not a production substitute for the Foundry service.
+
+SQLite persistence and the old `Distributor__*` configuration are removed. Existing SQLite databases are not migrated automatically. Inspect and finish/reconcile previous work before switching; retain old artifacts and use new assignment IDs in the new plant store.
+
+The official AgentServer dependencies are prerelease: Invocations `1.0.0-beta.8` and Core `1.0.0-beta.30`. Container publication and local tests do not establish tenant availability, actual platform authentication, or deployed recovery; those still require the two-devbox Azure proof.
