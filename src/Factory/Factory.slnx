@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Factory.Contracts/Factory.Contracts.csproj" />
+  <Project Path="Factory.Plant.Service/Factory.Plant.Service.csproj" />
+  <Project Path="Factory.Tests/Factory.Tests.csproj" />
+</Solution>
