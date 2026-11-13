@@ -2,6 +2,7 @@ using System.Threading.RateLimiting;
 using Azure.Core;
 using Azure.Identity;
 using Factory.Plant.Service.Storage;
+using Factory.Plant.Service.Web;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Azure.Cosmos;
@@ -31,18 +32,23 @@ public partial class Program
         var protection = builder.Services.AddDataProtection().SetApplicationName("Factory.Plant.Service");
         if (builder.Configuration["Factory:PaginationKeyRingPath"] is { Length: > 0 } keyPath)
             protection.PersistKeysToFileSystem(new DirectoryInfo(keyPath));
+        var websiteEnabled = builder.Services.AddFactoryWebsite(builder.Configuration, protection);
         builder.Services.AddSingleton<Pagination>();
         builder.Services.AddScoped<PlantOperations>();
-        builder.Services.AddSingleton(serviceProvider =>
+        builder.Services.AddSingleton<TokenCredential>(serviceProvider =>
         {
             var settings = serviceProvider.GetRequiredService<ApiSettings>();
-            TokenCredential credential = settings.DataCredential switch
+            return settings.DataCredential switch
             {
                 "ManagedIdentity" => new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(settings.DataIdentityClientId)),
                 "AzureCli" when builder.Environment.IsDevelopment() => new AzureCliCredential(new AzureCliCredentialOptions { TenantId = settings.TenantId }),
                 _ => throw new InvalidOperationException("An explicit supported data credential is required.")
             };
-            return new CosmosClient(settings.CosmosEndpoint, credential, new CosmosClientOptions
+        });
+        builder.Services.AddSingleton(serviceProvider =>
+        {
+            var settings = serviceProvider.GetRequiredService<ApiSettings>();
+            return new CosmosClient(settings.CosmosEndpoint, serviceProvider.GetRequiredService<TokenCredential>(), new CosmosClientOptions
             {
                 Serializer = new RecordSerializer(),
                 ConnectionMode = ConnectionMode.Gateway,
@@ -66,7 +72,10 @@ public partial class Program
                     ? ApiCaller.Read(context.User).Key : context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
                 _ => new FixedWindowRateLimiterOptions
                 {
-                    PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
+                    PermitLimit = 120,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                    AutoReplenishment = true
                 }));
             options.OnRejected = (context, _) => new ValueTask(ApiProblems.WriteAsync(context.HttpContext,
                 429, "rate_limited", "The request rate limit was exceeded.",
@@ -76,14 +85,49 @@ public partial class Program
 
         var app = builder.Build();
         var configurationErrors = app.Services.GetRequiredService<ApiSettings>().Validate(app.Environment);
+        var websiteSettings = app.Services.GetRequiredService<IOptions<WebsiteSettings>>().Value;
+        if (websiteEnabled)
+        {
+            var websiteErrors = configurationErrors.Concat(websiteSettings.Validate()).ToArray();
+            if (websiteErrors.Length != 0)
+                throw new InvalidOperationException("Factory website configuration is incomplete: " + string.Join(", ", websiteErrors));
+            if (!app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Authentication.AuthenticationOptions>>()
+                .Value.Schemes.Any(scheme => scheme.Name == WebsiteAuthentication.OidcScheme))
+                throw new InvalidOperationException("Factory requires application-managed OpenID Connect. Disable App Service Authentication.");
+        }
         app.UseExceptionHandler();
-        app.UseStatusCodePages(context => ApiProblems.WriteAsync(context.HttpContext, context.HttpContext.Response.StatusCode,
-            "not_found", "No response is available for this request."));
+        app.UseStatusCodePages(context => WebsiteErrors.IsPage(context.HttpContext.Request.Path)
+            ? WebsiteErrors.WriteAsync(context.HttpContext, context.HttpContext.Response.StatusCode,
+                context.HttpContext.Response.StatusCode == 400
+                    ? "The form could not be accepted. Reload the page and submit it again."
+                    : "No page is available for this request, or the requested action is not permitted.")
+            : ApiProblems.WriteAsync(context.HttpContext, context.HttpContext.Response.StatusCode,
+                "not_found", "No response is available for this request."));
         if (configurationErrors.Count != 0)
             app.Logger.LogWarning("Plant API disabled until configuration is supplied or corrected: {Fields}",
                 string.Join(", ", configurationErrors));
+        if (!websiteEnabled)
+            app.Logger.LogWarning("Browser sign-in disabled. Set Factory:Web:Enabled and supply its required configuration.");
         app.Use(async (context, next) =>
         {
+            if (WebsiteErrors.IsPage(context.Request.Path))
+            {
+                context.Response.OnStarting(() =>
+                {
+                    context.Response.Headers.CacheControl = "no-store";
+                    context.Response.Headers["Content-Security-Policy"] =
+                        "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https://login.microsoftonline.com";
+                    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+                    context.Response.Headers.XContentTypeOptions = "nosniff";
+                    return Task.CompletedTask;
+                });
+                if (!websiteEnabled && context.Request.Path != "/")
+                {
+                    await WebsiteErrors.WriteAsync(context, 503,
+                        "Browser sign-in is not configured. Configure Factory:Web and the backing services before using plant pages.");
+                    return;
+                }
+            }
             if (context.Request.Path.StartsWithSegments("/v1"))
             {
                 context.Response.Headers.CacheControl = "no-store";
@@ -95,30 +139,12 @@ public partial class Program
             }
             await next(context);
         });
+        app.UseStaticFiles();
         app.UseAuthentication();
         app.UseRateLimiter();
         app.UseAuthorization();
 
-        app.MapGet("/", () => Results.Content(
-            """
-            <!doctype html>
-            <html lang="en">
-            <head>
-              <meta charset="utf-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1">
-              <title>Factory</title>
-            </head>
-            <body>
-              <main>
-                <h1>Factory</h1>
-                <p>The plant service foundation is running.</p>
-                <p>Web sign-in and plant management pages are not available yet.</p>
-              </main>
-            </body>
-            </html>
-            """,
-            "text/html; charset=utf-8"));
-
+        app.MapControllers();
         app.MapGet("/health/live", () => Results.Ok(new { status = "alive" }));
         app.MapPlantEndpoints();
 

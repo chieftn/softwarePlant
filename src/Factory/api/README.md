@@ -1,6 +1,6 @@
 # Plant and Workbench REST Contract
 
-[`openapi.yaml`](openapi.yaml) is the source contract for the first plant and workbench operations. It is OpenAPI 3.0.3, authored directly; no TypeSpec compiler or Node toolchain is required. It does **not** add runtime endpoints.
+[`openapi.yaml`](openapi.yaml) is the source contract for the first plant and workbench operations. It is OpenAPI 3.0.3, authored directly; no TypeSpec compiler or Node toolchain is required. The service now implements these endpoints with Entra bearer authentication and Cosmos persistence. Live configuration is described in the [service README](../README.md).
 
 | Method | Route | Purpose |
 |---|---|---|
@@ -39,4 +39,4 @@ dotnet test .\src\Factory\Factory.Tests\Factory.Tests.csproj `
     --filter FullyQualifiedName~PlantApiContractTests
 ```
 
-This checks the document, not implementation conformance. The current service still returns 404 for these routes. Authentication, storage and handlers are a subsequent implementation step; do not substitute anonymous or in-memory fallback behavior.
+This checks the document, not implementation conformance. `PlantApiTests`, `WorkbenchApiTests`, and `StorageRecordTests` cover runtime behavior using signed test JWTs, an isolated transactional store, and the Cosmos record serializer. No test-only identity or store is selected by runtime configuration.

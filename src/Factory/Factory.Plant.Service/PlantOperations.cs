@@ -237,6 +237,8 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
             var record = Records.Require<T>(result.Record);
             if (record.ScopeId != scope || record.Id != id || record.PlantId != plantId)
                 throw new InvalidOperationException("The stored record address is inconsistent.");
+            if (record is PlantRecord plant && plant.Plant.Id != plantId)
+                throw new InvalidOperationException("The stored plant identity is inconsistent.");
         }
         return result;
     }

@@ -1,0 +1,46 @@
+@model WorkbenchesPage
+@{
+    ViewData["Title"] = "Workbenches";
+}
+<p><a href="/plants">Back to plants</a></p>
+<div class="page-heading">
+    <div><p class="eyebrow">Plant resources</p><h1>Workbenches</h1></div>
+    <a class="button secondary" asp-action="Index" asp-route-plantId="@Model.PlantId">Refresh</a>
+</div>
+<p class="muted">Plant <code>@Model.PlantId</code>. Only workbenches within your current scope are shown.</p>
+<p class="muted">Contact becomes stale after 90 seconds without presence. Admission and reported availability are separate.</p>
+@if (Model.Workbenches.Items.Count == 0)
+{
+    <section class="panel empty">
+        <h2>No workbenches on this page</h2>
+        <p>No workbenches are visible here. Enrollment and admission are not available in this slice.</p>
+    </section>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <caption class="sr-only">Workbenches in this plant</caption>
+            <thead><tr><th scope="col">Name</th><th scope="col">Admission</th><th scope="col">Contact</th><th scope="col">Reported availability</th><th scope="col">Last contact (UTC)</th></tr></thead>
+            <tbody>
+            @foreach (var workbench in Model.Workbenches.Items)
+            {
+                <tr>
+                    <th scope="row"><a asp-action="Detail" asp-route-plantId="@Model.PlantId" asp-route-workbenchId="@workbench.Id">@workbench.Name</a></th>
+                    <td><span class="badge">@workbench.AdmissionState</span></td>
+                    <td><span class="badge" data-contact="@workbench.ContactState">@workbench.ContactState</span></td>
+                    <td>@(workbench.Presence?.Status ?? "Not reported")</td>
+                    <td>@(workbench.LastSeenAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+@if (Model.Workbenches.ContinuationToken is { } token)
+{
+    <nav class="pagination" aria-label="Workbench pages">
+        <a class="button secondary" asp-action="Index" asp-route-plantId="@Model.PlantId"
+           asp-route-pageSize="@Context.Request.Query["pageSize"].FirstOrDefault()" asp-route-continuationToken="@token">Next page</a>
+    </nav>
+}

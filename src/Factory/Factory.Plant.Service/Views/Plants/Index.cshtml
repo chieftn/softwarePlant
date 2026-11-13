@@ -1,0 +1,46 @@
+@model PlantsPage
+@{
+    ViewData["Title"] = "Plants";
+}
+<div class="page-heading">
+    <div><p class="eyebrow">Inventory</p><h1>Plants</h1></div>
+    @if (User.IsInRole("Factory.PlantCreator"))
+    {
+        <a class="button" href="/plants/create">Create plant</a>
+    }
+</div>
+<p class="muted">Plants your account is currently permitted to view.</p>
+@if (Model.Plants.Items.Count == 0)
+{
+    <section class="panel empty">
+        <h2>No plants on this page</h2>
+        <p>Create a plant if you have creator access, or ask a plant owner to grant access.</p>
+    </section>
+}
+else
+{
+    <div class="table-wrap">
+        <table>
+            <caption class="sr-only">Plants</caption>
+            <thead><tr><th scope="col">Name</th><th scope="col">State</th><th scope="col">Created (UTC)</th><th scope="col">Resources</th></tr></thead>
+            <tbody>
+            @foreach (var plant in Model.Plants.Items)
+            {
+                <tr>
+                    <th scope="row"><a asp-action="Detail" asp-route-plantId="@plant.Id">@plant.Name</a></th>
+                    <td><span class="badge">@plant.State</span></td>
+                    <td><time datetime="@plant.CreatedAt.ToString("O")">@plant.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</time></td>
+                    <td><a asp-controller="Workbenches" asp-action="Index" asp-route-plantId="@plant.Id">Workbenches</a></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+@if (Model.Plants.ContinuationToken is { } token)
+{
+    <nav class="pagination" aria-label="Plant pages">
+        <a class="button secondary" asp-action="Index" asp-route-pageSize="@Context.Request.Query["pageSize"].FirstOrDefault()"
+           asp-route-continuationToken="@token">Next page</a>
+    </nav>
+}

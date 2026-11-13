@@ -16,10 +16,18 @@ public sealed record ApiCaller(EntraPrincipal Principal, string ClientId)
     public static bool TryRead(ClaimsPrincipal user, out ApiCaller? caller)
     {
         caller = null;
-        if (!SingleGuid(user, "tid", out var tenant) || !SingleGuid(user, "oid", out var subject) ||
-            !SingleGuid(user, "azp", out var client))
+        if (!TryReadPrincipal(user, out var principal) || !SingleGuid(user, "azp", out var client))
             return false;
-        caller = new(new(tenant, subject), client);
+        caller = new(principal!, client);
+        return true;
+    }
+
+    internal static bool TryReadPrincipal(ClaimsPrincipal user, out EntraPrincipal? principal)
+    {
+        principal = null;
+        if (!SingleGuid(user, "tid", out var tenant) || !SingleGuid(user, "oid", out var subject))
+            return false;
+        principal = new(tenant, subject);
         return true;
     }
 
@@ -27,7 +35,7 @@ public sealed record ApiCaller(EntraPrincipal Principal, string ClientId)
     {
         value = "";
         var claims = user.FindAll(type).ToArray();
-        if (claims.Length != 1 || !Guid.TryParseExact(claims[0].Value, "D", out var id))
+        if (claims.Length != 1 || !Guid.TryParseExact(claims[0].Value, "D", out var id) || id == Guid.Empty)
             return false;
         value = id.ToString("D");
         return true;
@@ -83,10 +91,13 @@ public static class ApiAuthentication
             };
         });
         services.AddAuthorizationBuilder()
-            .AddPolicy("human", policy => policy.RequireAuthenticatedUser().RequireAssertion(context => Human(context.User)))
-            .AddPolicy("creator", policy => policy.RequireAuthenticatedUser().RequireAssertion(context =>
+            .AddPolicy("human", policy => policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
+                .RequireAuthenticatedUser().RequireAssertion(context => Human(context.User)))
+            .AddPolicy("creator", policy => policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
+                .RequireAuthenticatedUser().RequireAssertion(context =>
                 Human(context.User) && context.User.IsInRole("Factory.PlantCreator")))
-            .AddPolicy("workbench", policy => policy.RequireAuthenticatedUser().RequireAssertion(context =>
+            .AddPolicy("workbench", policy => policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
+                .RequireAuthenticatedUser().RequireAssertion(context =>
                 !context.User.HasClaim(claim => claim.Type == "scp") &&
                 !context.User.HasClaim("idtyp", "user") && context.User.IsInRole("Workbench.Connect")));
     }

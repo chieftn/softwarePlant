@@ -28,7 +28,7 @@ public sealed class TestClock : TimeProvider
     public override DateTimeOffset GetUtcNow() => Now;
 }
 
-public sealed class ApiTestApplication : WebApplicationFactory<Program>
+public class ApiTestApplication : WebApplicationFactory<Program>
 {
     public const string Tenant = "10000000-0000-0000-0000-000000000001";
     public const string Audience = "10000000-0000-0000-0000-000000000002";
@@ -37,7 +37,7 @@ public sealed class ApiTestApplication : WebApplicationFactory<Program>
     public const string DaemonId = "30000000-0000-0000-0000-000000000001";
     public const string DaemonClientId = "30000000-0000-0000-0000-000000000002";
     public const string Issuer = $"https://login.microsoftonline.com/{Tenant}/v2.0";
-    private readonly RSA signingKey = RSA.Create(2048);
+    protected readonly RSA signingKey = RSA.Create(2048);
     public TestRecordStore Store { get; } = new();
     public TestClock Clock { get; } = new();
 

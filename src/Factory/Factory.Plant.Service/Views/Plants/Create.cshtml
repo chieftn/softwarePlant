@@ -1,0 +1,24 @@
+@model CreatePlantForm
+@{
+    ViewData["Title"] = "Create plant";
+}
+<p><a href="/plants">Back to plants</a></p>
+<section class="panel narrow">
+    <p class="eyebrow">New resource</p>
+    <h1>Create a plant</h1>
+    <p>Your signed-in Entra identity will own this plant. This does not create Azure resources or enroll workbenches.</p>
+    <form asp-controller="Plants" asp-action="CreatePlant" method="post" class="stack">
+        <div asp-validation-summary="All" class="validation" role="alert"></div>
+        <input asp-for="OperationKey" type="hidden" />
+        <div>
+            <label asp-for="Name">Plant name</label>
+            <input asp-for="Name" required aria-describedby="name-help" autocomplete="off" />
+            <p id="name-help" class="muted">Up to 128 characters. Names do not need to be unique.</p>
+        </div>
+        <div class="actions">
+            <button type="submit" class="button">Create plant</button>
+            <a href="/plants">Cancel</a>
+        </div>
+    </form>
+    <p class="muted">If a submission fails, retry this form unchanged to reuse its operation key.</p>
+</section>

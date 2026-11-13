@@ -3,8 +3,8 @@ info:
   title: Factory Plant API
   version: 1.0.0
   description: |
-    Contract proposal for plant and workbench REST operations. These routes are not
-    implemented by the current service. The HTML/Datastar application will call
+    Contract for plant and workbench REST operations implemented by the service.
+    Live Entra/Cosmos wiring is deployment-specific. The HTML/Datastar application will call
     the same application operations and authorization rules, not duplicate them
     or call the bearer-only API through loopback HTTP.
 
@@ -134,6 +134,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '429':
@@ -229,6 +231,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '428':
@@ -371,6 +375,8 @@ paths:
           $ref: '#/components/responses/WorkbenchNotFound'
         '409':
           $ref: '#/components/responses/WorkbenchConflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '429':
@@ -430,6 +436,8 @@ paths:
           $ref: '#/components/responses/WorkbenchNotFound'
         '409':
           $ref: '#/components/responses/WorkbenchConflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '429':
@@ -829,6 +837,12 @@ components:
           minimum: 1
           description: When present, matches the Retry-After header.
   responses:
+    RequestTooLarge:
+      description: Request body exceeds 128 KiB. Code request_too_large.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
     InvalidRequest:
       description: |
         Malformed input, missing required input (except If-Match), unknown field,

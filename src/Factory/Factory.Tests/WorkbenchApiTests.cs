@@ -122,9 +122,12 @@ public sealed class WorkbenchApiTests
         });
         var grant = new AccessRecord
         {
-            Id = "reader-grant", PlantId = a.Id, ScopeId = Records.PlantScope(a.Id),
+            Id = "reader-grant",
+            PlantId = a.Id,
+            ScopeId = Records.PlantScope(a.Id),
             Principal = new(ApiTestApplication.Tenant, ApiTestApplication.ReaderId),
-            Role = "Plant.Reader", WorkbenchId = "box-a"
+            Role = "Plant.Reader",
+            WorkbenchId = "box-a"
         };
         app.Store.Seed(grant);
         var list = await reader.GetFromJsonAsync<Page<WorkbenchView>>($"/v1/plants/{a.Id}/workbenches");
@@ -152,17 +155,26 @@ public sealed class WorkbenchApiTests
         await ProblemAsync(revoked, 403, "forbidden");
     }
 
-    private static WorkbenchRecord Workbench(ApiTestApplication app, string plantId, string id) => new()
+    internal static WorkbenchRecord Workbench(ApiTestApplication app, string plantId, string id) => new()
     {
-        Id = id, PlantId = plantId, ScopeId = Records.WorkbenchScope(plantId, id), Name = "Approved " + id,
+        Id = id,
+        PlantId = plantId,
+        ScopeId = Records.WorkbenchScope(plantId, id),
+        Name = "Approved " + id,
         Identity = new(ApiTestApplication.Tenant, ApiTestApplication.DaemonId, ApiTestApplication.DaemonClientId),
-        AdmissionState = "active", CreatedAt = app.Clock.Now
+        AdmissionState = "active",
+        CreatedAt = app.Clock.Now
     };
 
     private static WorkbenchRegistration Registration() => new()
     {
-        SchemaVersion = "1", MachineName = "observed-machine", HostVersion = "test-host", WorkerVersion = "test-worker",
-        ProtocolVersion = "1", AssignmentSchemaVersions = ["1"], Capabilities = ["workspace", "verification"]
+        SchemaVersion = "1",
+        MachineName = "observed-machine",
+        HostVersion = "test-host",
+        WorkerVersion = "test-worker",
+        ProtocolVersion = "1",
+        AssignmentSchemaVersions = ["1"],
+        Capabilities = ["workspace", "verification"]
     };
 
     private static WorkbenchPresence Presence(string status) => new() { SchemaVersion = "1", Status = status };

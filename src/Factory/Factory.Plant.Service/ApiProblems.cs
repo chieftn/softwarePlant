@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Azure.Identity;
 using Factory.Contracts;
+using Factory.Plant.Service.Web;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Azure.Cosmos;
 
@@ -20,6 +21,22 @@ public static class ApiProblems
     public static ApiException Forbidden() => new(403, "forbidden", "Current authority does not permit this operation.");
     public static ApiException Unavailable() => new(503, "service_unavailable", "The operation is temporarily unavailable.", 5);
     public static ApiException Conflict() => new(409, "idempotency_conflict", "This operation key was used with different input.");
+
+    public static ApiException FromException(Exception exception) => exception switch
+    {
+        ApiException known => known,
+        ContractValidationException validation => Invalid(validation.Message),
+        JsonException => Invalid("The JSON body is invalid, incomplete or contains unsupported fields."),
+        BadHttpRequestException { StatusCode: 413 } => new(413, "request_too_large", "The request body exceeds the allowed size."),
+        BadHttpRequestException bad => new(bad.StatusCode, "invalid_request", "The HTTP request is invalid."),
+        CosmosException cosmos when cosmos.StatusCode == HttpStatusCode.TooManyRequests =>
+            new(429, "rate_limited", "Persistence is throttled.", Math.Max(1, (int)Math.Ceiling(cosmos.RetryAfter?.TotalSeconds ?? 1))),
+        CosmosException cosmos when (int)cosmos.StatusCode >= 500 ||
+            cosmos.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.Unauthorized or
+                HttpStatusCode.Forbidden or HttpStatusCode.NotFound => Unavailable(),
+        AuthenticationFailedException or HttpRequestException or TimeoutException => Unavailable(),
+        _ => new(500, "internal_error", "An unexpected server failure occurred.")
+    };
 
     public static Task WriteAsync(HttpContext context, int status, string code, string detail, int? retryAfter = null)
     {
@@ -43,26 +60,15 @@ public sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) : I
         if (exception is OperationCanceledException && context.RequestAborted.IsCancellationRequested)
             return true;
 
-        var problem = exception switch
-        {
-            ApiException known => known,
-            ContractValidationException validation => ApiProblems.Invalid(validation.Message),
-            JsonException => ApiProblems.Invalid("The JSON body is invalid, incomplete or contains unsupported fields."),
-            BadHttpRequestException bad => new ApiException(bad.StatusCode, "invalid_request", "The HTTP request is invalid."),
-            CosmosException cosmos when cosmos.StatusCode == HttpStatusCode.TooManyRequests =>
-                new ApiException(429, "rate_limited", "Persistence is throttled.",
-                    Math.Max(1, (int)Math.Ceiling(cosmos.RetryAfter?.TotalSeconds ?? 1))),
-            CosmosException cosmos when (int)cosmos.StatusCode >= 500 ||
-                cosmos.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.Unauthorized or
-                    HttpStatusCode.Forbidden or HttpStatusCode.NotFound => ApiProblems.Unavailable(),
-            AuthenticationFailedException or HttpRequestException or TimeoutException => ApiProblems.Unavailable(),
-            _ => new ApiException(500, "internal_error", "An unexpected server failure occurred.")
-        };
+        var problem = ApiProblems.FromException(exception);
         if (problem.Status >= 500)
-            logger.LogError(exception, "API failure {Code}; correlation {CorrelationId}", problem.Code, context.TraceIdentifier);
+            logger.LogError(exception, "Request failure {Code}; correlation {CorrelationId}", problem.Code, context.TraceIdentifier);
         else
-            logger.LogInformation("API rejected request with {Code}; correlation {CorrelationId}", problem.Code, context.TraceIdentifier);
-        await ApiProblems.WriteAsync(context, problem.Status, problem.Code, problem.Message, problem.RetryAfter);
+            logger.LogInformation("Request rejected with {Code}; correlation {CorrelationId}", problem.Code, context.TraceIdentifier);
+        if (WebsiteErrors.IsPage(context.Request.Path))
+            await WebsiteErrors.WriteAsync(context, problem.Status, problem.Message, problem.RetryAfter);
+        else
+            await ApiProblems.WriteAsync(context, problem.Status, problem.Code, problem.Message, problem.RetryAfter);
         return true;
     }
 }

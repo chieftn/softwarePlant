@@ -21,13 +21,13 @@ public sealed class ServiceFoundationTests : IClassFixture<UnconfiguredApplicati
     }
 
     [Fact]
-    public async Task LandingPageStatesThatPlantManagementIsNotAvailable()
+    public async Task LandingPageExplainsMissingBrowserConfiguration()
     {
         using var response = await client.GetAsync("/");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
-        Assert.Contains("Web sign-in and plant management pages are not available yet.", await response.Content.ReadAsStringAsync());
+        Assert.Contains("Browser sign-in is not configured", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]
@@ -41,7 +41,6 @@ public sealed class ServiceFoundationTests : IClassFixture<UnconfiguredApplicati
     }
 
     [Theory]
-    [InlineData("GET", "/plants")]
     [InlineData("GET", "/.well-known/plant-config")]
     [InlineData("GET", "/health/ready")]
     public async Task UnimplementedOperationsReturnProblemDetailsInsteadOfPlaceholderSuccess(string method, string path)
@@ -66,5 +65,16 @@ public sealed class ServiceFoundationTests : IClassFixture<UnconfiguredApplicati
         Assert.Equal("service_unavailable", problem.GetProperty("code").GetString());
         Assert.True(problem.TryGetProperty("correlationId", out _));
         Assert.NotNull(response.Headers.RetryAfter);
+    }
+
+    [Theory]
+    [InlineData("/plants")]
+    [InlineData("/account/signin")]
+    public async Task MissingBrowserConfigurationReturnsAnExplicitHtmlError(string path)
+    {
+        using var response = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("Browser sign-in is not configured", await response.Content.ReadAsStringAsync());
     }
 }

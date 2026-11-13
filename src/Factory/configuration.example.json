@@ -1,0 +1,19 @@
+{
+  "Factory": {
+    "TenantId": "<entra-tenant-id>",
+    "ClientId": "<api-application-client-id>",
+    "CosmosEndpoint": "https://<cosmos-account>.documents.azure.com",
+    "CosmosDatabase": "plant",
+    "CosmosContainer": "records",
+    "DataCredential": "ManagedIdentity",
+    "DataIdentityClientId": "<user-assigned-data-identity-client-id>",
+    "SupportedProtocolVersions": ["1"],
+    "SupportedAssignmentSchemaVersions": ["1"],
+    "Web": {
+      "Enabled": false,
+      "PublicOrigin": "https://localhost:7443",
+      "DataProtectionBlobUri": "https://<storage-account>.blob.core.windows.net/data-protection/keys.xml",
+      "DataProtectionKeyId": "https://<key-vault>.vault.azure.net/keys/<cookie-protection-key>"
+    }
+  }
+}

@@ -29,11 +29,17 @@ param apiClientId string
 @description('Explicitly approved registration compatibility. This does not install or implement worker adapters.')
 @minLength(1)
 @maxLength(16)
-param supportedProtocolVersions array
+param supportedProtocolVersions string[]
 
 @minLength(1)
 @maxLength(16)
-param supportedAssignmentSchemaVersions array
+param supportedAssignmentSchemaVersions string[]
+
+@description('Optional existing secret in this vault, holding the Entra web confidential-client credential. Enable only after separately authorized bootstrap.')
+param webSignInSecretName string = ''
+
+@description('Optional existing RSA key in this vault, protecting the shared Data Protection key ring. Both web parameters are required to enable browser sign-in.')
+param cookieProtectionKeyName string = ''
 
 @description('Address space must not overlap networks this deployment will connect to.')
 param vnetAddressPrefix string = '10.42.0.0/24'
@@ -44,6 +50,24 @@ param tags object = {}
 
 var suffix = take(uniqueString(resourceGroup().id, namePrefix), 10)
 var stem = '${namePrefix}-${suffix}'
+var enableWeb = !empty(webSignInSecretName) && !empty(cookieProtectionKeyName)
+var browserSettings = enableWeb ? [
+  { name: 'Factory__Web__Enabled', value: 'true' }
+  { name: 'Factory__Web__PublicOrigin', value: 'https://${stem}-web.azurewebsites.net' }
+  { name: 'Factory__Web__ClientSecret', value: '@Microsoft.KeyVault(SecretUri=${vault.properties.vaultUri}secrets/${webSignInSecretName})' }
+  { name: 'Factory__Web__DataProtectionBlobUri', value: '${storage.properties.primaryEndpoints.blob}data-protection/keys.xml' }
+  { name: 'Factory__Web__DataProtectionKeyId', value: '${vault.properties.vaultUri}keys/${cookieProtectionKeyName}' }
+] : [
+  { name: 'Factory__Web__Enabled', value: 'false' }
+]
+var protocolSettings = [for (version, index) in supportedProtocolVersions: {
+  name: 'Factory__SupportedProtocolVersions__${index}'
+  value: version
+}]
+var assignmentSchemaSettings = [for (version, index) in supportedAssignmentSchemaVersions: {
+  name: 'Factory__SupportedAssignmentSchemaVersions__${index}'
+  value: version
+}]
 var blobContainers = [
   'snapshots'
   'evidence'
@@ -297,6 +321,37 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
+// Bootstrap creates the credential and key separately; this template never handles their private values.
+resource webSignInSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = if (enableWeb) {
+  parent: vault
+  name: webSignInSecretName
+}
+
+resource cookieProtectionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' existing = if (enableWeb) {
+  parent: vault
+  name: cookieProtectionKeyName
+}
+
+resource webCredentialAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableWeb) {
+  name: guid(vault.id, webSignInSecretName, dataIdentity.id, 'web-credential')
+  scope: webSignInSecret
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+    principalId: dataIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource cookieProtectionAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableWeb) {
+  name: guid(vault.id, cookieProtectionKeyName, dataIdentity.id, 'cookie-protection')
+  scope: cookieProtectionKey
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '12338af0-0e69-4776-bea7-57ae8d297424')
+    principalId: dataIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 var privateServices = [
   {
     name: 'cosmos'
@@ -411,9 +466,11 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
   }
   properties: {
     serverFarmId: plan.id
+    keyVaultReferenceIdentity: dataIdentity.id
     httpsOnly: true
     publicNetworkAccess: 'Enabled'
     virtualNetworkSubnetId: appSubnet.id
+    vnetRouteAllEnabled: true
     siteConfig: {
       linuxFxVersion: 'DOTNETCORE|10.0'
       appCommandLine: './Factory.Plant.Service --urls http://0.0.0.0:8080'
@@ -434,15 +491,17 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'Factory__DataCredential', value: 'ManagedIdentity' }
         { name: 'Factory__DataIdentityClientId', value: dataIdentity.properties.clientId }
         { name: 'Factory__PaginationKeyRingPath', value: '/home/data/factory-pagination-keys' }
-      ], [for (version, index) in supportedProtocolVersions: {
-        name: 'Factory__SupportedProtocolVersions__${index}'
-        value: version
-      }], [for (version, index) in supportedAssignmentSchemaVersions: {
-        name: 'Factory__SupportedAssignmentSchemaVersions__${index}'
-        value: version
-      }])
+      ], protocolSettings, assignmentSchemaSettings, browserSettings)
     }
   }
+  dependsOn: [
+    cosmosDataAccess
+    blobDataAccess
+    webCredentialAccess
+    cookieProtectionAccess
+    dnsGroups
+    dnsLinks
+  ]
 }
 
 resource disableFtpCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {

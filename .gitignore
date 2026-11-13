@@ -6,3 +6,4 @@ src/Workbench/**/data/
 src/Factory/artifacts*/
 src/Factory/deploy/main.json
 src/Factory/deploy/*.parameters.json
+src/Factory/Factory.Plant.Service/appsettings.Development.json

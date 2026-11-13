@@ -131,6 +131,15 @@ public sealed class PlantApiTests
             await ProblemAsync(missingKey, 400, "invalid_request");
         using (var overlong = await SendAsync(owner, HttpMethod.Post, "/v1/plants", Write(new string('x', 129)), Key()))
             await ProblemAsync(overlong, 400, "invalid_request");
+        using (var request = new HttpRequestMessage(HttpMethod.Post, "/v1/plants")
+        {
+            Content = new StringContent(new string('x', 129 * 1024), Encoding.UTF8, "application/json")
+        })
+        {
+            request.Headers.Add("Idempotency-Key", Key());
+            using var response = await owner.SendAsync(request);
+            await ProblemAsync(response, 413, "request_too_large");
+        }
         using (var request = new HttpRequestMessage(HttpMethod.Post, "/v1/plants") { Content = new StringContent("plain text") })
         {
             request.Headers.Add("Idempotency-Key", Key());
@@ -155,6 +164,19 @@ public sealed class PlantApiTests
             await ProblemAsync(invalid, 400, "invalid_request");
         }
         Assert.Single(app.Store.All<PlantRecord>());
+    }
+
+    [Fact]
+    public async Task NameLengthUsesUnicodeCharactersRatherThanUtf16CodeUnits()
+    {
+        using var app = new ApiTestApplication();
+        using var owner = app.Human();
+        var name = string.Concat(Enumerable.Repeat(char.ConvertFromUtf32(0x1F331), 128));
+        var (plant, _) = await CreateAsync(owner, name);
+        Assert.Equal(name, plant.Name);
+        using var tooLong = await SendAsync(owner, HttpMethod.Post, "/v1/plants",
+            Write(name + char.ConvertFromUtf32(0x1F331)), Key());
+        await ProblemAsync(tooLong, 400, "invalid_request");
     }
 
     [Theory]

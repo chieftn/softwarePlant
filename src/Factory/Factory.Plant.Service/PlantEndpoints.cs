@@ -119,7 +119,7 @@ public static partial class PlantEndpoints
         return document.Deserialize<T>(Json) ?? throw ApiProblems.Invalid("A JSON request body is required.");
     }
 
-    private static (int Size, string? Token) PageQuery(HttpContext context)
+    internal static (int Size, string? Token) PageQuery(HttpContext context)
     {
         if (context.Request.Query.Keys.Any(key => key is not ("pageSize" or "continuationToken")))
             throw ApiProblems.Invalid("Unsupported query parameter.");
@@ -152,9 +152,9 @@ public static partial class PlantEndpoints
         return key.ToString("D");
     }
 
-    private static string PlantId(string value) => Guid.TryParseExact(value, "D", out var id)
+    internal static string PlantId(string value) => Guid.TryParseExact(value, "D", out var id)
         ? id.ToString("D") : throw ApiProblems.Invalid("plantId must be a UUID.");
-    private static string WorkbenchId(string value) => WorkbenchPattern().IsMatch(value)
+    internal static string WorkbenchId(string value) => WorkbenchPattern().IsMatch(value)
         ? value : throw ApiProblems.Invalid("workbenchId must contain lowercase letters, digits and hyphens, up to 63 characters.");
 
     [GeneratedRegex("\\A[a-z0-9][a-z0-9-]{0,62}\\z", RegexOptions.CultureInvariant)]

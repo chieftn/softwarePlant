@@ -1,0 +1,49 @@
+@model WorkbenchView
+@{
+    ViewData["Title"] = Model.Name;
+}
+<p><a asp-action="Index" asp-route-plantId="@Model.PlantId">Back to workbenches</a></p>
+<div class="page-heading">
+    <div><p class="eyebrow">Workbench</p><h1>@Model.Name</h1></div>
+    <a class="button secondary" asp-action="Detail" asp-route-plantId="@Model.PlantId" asp-route-workbenchId="@Model.Id">Refresh</a>
+</div>
+<section class="panel">
+    <h2>Status</h2>
+    <dl>
+        <dt>Admission</dt><dd>@Model.AdmissionState</dd>
+        <dt>Contact</dt><dd>@Model.ContactState</dd>
+        <dt>Reported availability</dt><dd>@(Model.Presence?.Status ?? "Not reported")</dd>
+        <dt>Reported reason</dt><dd>@(Model.Presence?.Reason ?? "None")</dd>
+        <dt>Last contact (UTC)</dt><dd>@(Model.LastSeenAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</dd>
+    </dl>
+    <p class="muted">Presence is a report, not a capacity reservation or a guarantee that a disconnected process has stopped.</p>
+</section>
+<section class="panel">
+    <h2>Registration</h2>
+    @if (Model.Registration is { } registration)
+    {
+        <dl>
+            <dt>Machine</dt><dd>@registration.MachineName</dd>
+            <dt>Host version</dt><dd>@registration.HostVersion</dd>
+            <dt>Worker version</dt><dd>@registration.WorkerVersion</dd>
+            <dt>Protocol</dt><dd>@registration.ProtocolVersion</dd>
+            <dt>Assignment schemas</dt><dd>@string.Join(", ", registration.AssignmentSchemaVersions)</dd>
+            <dt>Capabilities</dt><dd>@string.Join(", ", registration.Capabilities)</dd>
+            <dt>Registered (UTC)</dt><dd>@Model.RegisteredAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss")</dd>
+        </dl>
+    }
+    else
+    {
+        <p>This workbench has not registered with the service.</p>
+    }
+</section>
+<section class="panel">
+    <h2>Identity</h2>
+    <dl>
+        <dt>Workbench ID</dt><dd><code>@Model.Id</code></dd>
+        <dt>Plant ID</dt><dd><code>@Model.PlantId</code></dd>
+        <dt>Tenant ID</dt><dd><code>@Model.Identity.TenantId</code></dd>
+        <dt>Application client ID</dt><dd><code>@Model.Identity.ClientId</code></dd>
+        <dt>Service principal object ID</dt><dd><code>@Model.Identity.ObjectId</code></dd>
+    </dl>
+</section>
