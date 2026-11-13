@@ -4,22 +4,22 @@ public sealed class WebsiteSettings
 {
     public bool Enabled { get; set; }
     public string PublicOrigin { get; set; } = "";
-    public string ClientSecret { get; set; } = "";
     public string DataProtectionBlobUri { get; set; } = "";
     public string DataProtectionKeyId { get; set; } = "";
 
-    public IReadOnlyList<string> Validate()
+    public IReadOnlyList<string> Validate(IHostEnvironment environment)
     {
         var errors = new List<string>();
         if (!HttpsUri(PublicOrigin, out var origin) || origin!.AbsolutePath != "/")
             errors.Add("Factory:Web:PublicOrigin (HTTPS origin without a path)");
-        if (string.IsNullOrWhiteSpace(ClientSecret) || ClientSecret.StartsWith("@Microsoft.KeyVault(", StringComparison.Ordinal))
-            errors.Add("Factory:Web:ClientSecret (resolved server-side credential)");
-        if (!HttpsUri(DataProtectionBlobUri, out var blob) || blob!.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).Length < 2)
-            errors.Add("Factory:Web:DataProtectionBlobUri");
-        if (!HttpsUri(DataProtectionKeyId, out var key) ||
-            key!.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is not ["keys", { Length: > 0 }])
-            errors.Add("Factory:Web:DataProtectionKeyId (versionless Key Vault key URI)");
+        if (!environment.IsDevelopment())
+        {
+            if (!HttpsUri(DataProtectionBlobUri, out var blob) || blob!.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).Length < 2)
+                errors.Add("Factory:Web:DataProtectionBlobUri");
+            if (!HttpsUri(DataProtectionKeyId, out var key) ||
+                key!.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is not ["keys", { Length: > 0 }])
+                errors.Add("Factory:Web:DataProtectionKeyId (versionless Key Vault key URI)");
+        }
         return errors;
     }
 

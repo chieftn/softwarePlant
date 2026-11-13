@@ -23,7 +23,7 @@ using Xunit;
 
 namespace Factory.Tests;
 
-public sealed class WebsiteTestApplication : ApiTestApplication
+public sealed class WebsiteTestApplication(string environment = "Development") : ApiTestApplication
 {
     private readonly Dictionary<string, string> tokens = [];
     public bool WrongAudience { get; set; }
@@ -44,12 +44,13 @@ public sealed class WebsiteTestApplication : ApiTestApplication
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         base.ConfigureWebHost(builder);
+        builder.UseEnvironment(environment);
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Factory:Web:PublicOrigin"] = "https://localhost",
-            ["Factory:Web:ClientSecret"] = "isolated-test-credential",
-            ["Factory:Web:DataProtectionBlobUri"] = "https://storage.example.invalid/data-protection/keys.xml",
-            ["Factory:Web:DataProtectionKeyId"] = "https://vault.example.invalid/keys/cookie-protection"
+            ["Factory:ClientSecret"] = "isolated-test-credential",
+            ["Factory:Web:DataProtectionBlobUri"] = "",
+            ["Factory:Web:DataProtectionKeyId"] = ""
         }));
         builder.ConfigureTestServices(services =>
         {

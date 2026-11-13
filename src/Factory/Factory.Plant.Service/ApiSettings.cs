@@ -4,6 +4,7 @@ public sealed class ApiSettings
 {
     public string TenantId { get; set; } = "";
     public string ClientId { get; set; } = "";
+    public string ClientSecret { get; set; } = "";
     public string CosmosEndpoint { get; set; } = "";
     public string CosmosDatabase { get; set; } = "plant";
     public string CosmosContainer { get; set; } = "records";
@@ -13,6 +14,8 @@ public sealed class ApiSettings
     public string[] SupportedAssignmentSchemaVersions { get; set; } = [];
 
     public string Issuer => $"https://login.microsoftonline.com/{TenantId}/v2.0";
+    public bool HasClientSecret => !string.IsNullOrWhiteSpace(ClientSecret) &&
+        !ClientSecret.StartsWith("@Microsoft.KeyVault(", StringComparison.Ordinal);
 
     public IReadOnlyList<string> Validate(IHostEnvironment environment)
     {
@@ -27,9 +30,11 @@ public sealed class ApiSettings
             errors.Add("Factory:CosmosEndpoint");
         if (string.IsNullOrWhiteSpace(CosmosDatabase) || string.IsNullOrWhiteSpace(CosmosContainer))
             errors.Add("Factory:CosmosDatabase/CosmosContainer");
-        if (DataCredential is not ("ManagedIdentity" or "AzureCli") ||
-            (DataCredential == "AzureCli" && !environment.IsDevelopment()))
-            errors.Add("Factory:DataCredential (AzureCli is Development-only)");
+        if (DataCredential is not ("ManagedIdentity" or "AzureCli" or "ClientSecret") ||
+            (DataCredential is "AzureCli" or "ClientSecret" && !environment.IsDevelopment()))
+            errors.Add("Factory:DataCredential (AzureCli and ClientSecret are Development-only)");
+        if (DataCredential == "ClientSecret" && !HasClientSecret)
+            errors.Add("Factory:ClientSecret (resolved application credential)");
         if (DataCredential == "ManagedIdentity" && (!Guid.TryParseExact(DataIdentityClientId, "D", out var identity) || identity == Guid.Empty))
             errors.Add("Factory:DataIdentityClientId");
         if (!ValidVersions(SupportedProtocolVersions))

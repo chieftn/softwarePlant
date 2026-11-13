@@ -32,7 +32,7 @@ public partial class Program
         var protection = builder.Services.AddDataProtection().SetApplicationName("Factory.Plant.Service");
         if (builder.Configuration["Factory:PaginationKeyRingPath"] is { Length: > 0 } keyPath)
             protection.PersistKeysToFileSystem(new DirectoryInfo(keyPath));
-        var websiteEnabled = builder.Services.AddFactoryWebsite(builder.Configuration, protection);
+        var websiteEnabled = builder.Services.AddFactoryWebsite(builder.Configuration, builder.Environment, protection);
         builder.Services.AddSingleton<Pagination>();
         builder.Services.AddScoped<PlantOperations>();
         builder.Services.AddSingleton<TokenCredential>(serviceProvider =>
@@ -42,6 +42,8 @@ public partial class Program
             {
                 "ManagedIdentity" => new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(settings.DataIdentityClientId)),
                 "AzureCli" when builder.Environment.IsDevelopment() => new AzureCliCredential(new AzureCliCredentialOptions { TenantId = settings.TenantId }),
+                "ClientSecret" when builder.Environment.IsDevelopment() => new ClientSecretCredential(
+                    settings.TenantId, settings.ClientId, settings.ClientSecret),
                 _ => throw new InvalidOperationException("An explicit supported data credential is required.")
             };
         });
@@ -84,12 +86,15 @@ public partial class Program
         });
 
         var app = builder.Build();
-        var configurationErrors = app.Services.GetRequiredService<ApiSettings>().Validate(app.Environment);
+        var apiSettings = app.Services.GetRequiredService<ApiSettings>();
+        var configurationErrors = apiSettings.Validate(app.Environment);
         var websiteSettings = app.Services.GetRequiredService<IOptions<WebsiteSettings>>().Value;
         if (websiteEnabled)
         {
-            var websiteErrors = configurationErrors.Concat(websiteSettings.Validate()).ToArray();
-            if (websiteErrors.Length != 0)
+            var websiteErrors = configurationErrors.Concat(websiteSettings.Validate(app.Environment)).ToList();
+            if (!apiSettings.HasClientSecret)
+                websiteErrors.Add("Factory:ClientSecret (resolved application credential)");
+            if (websiteErrors.Count != 0)
                 throw new InvalidOperationException("Factory website configuration is incomplete: " + string.Join(", ", websiteErrors));
             if (!app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Authentication.AuthenticationOptions>>()
                 .Value.Schemes.Any(scheme => scheme.Name == WebsiteAuthentication.OidcScheme))

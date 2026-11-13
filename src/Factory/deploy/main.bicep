@@ -50,11 +50,12 @@ param tags object = {}
 
 var suffix = take(uniqueString(resourceGroup().id, namePrefix), 10)
 var stem = '${namePrefix}-${suffix}'
+var cosmosAccountName = '${stem}-cosmos'
 var enableWeb = !empty(webSignInSecretName) && !empty(cookieProtectionKeyName)
 var browserSettings = enableWeb ? [
   { name: 'Factory__Web__Enabled', value: 'true' }
   { name: 'Factory__Web__PublicOrigin', value: 'https://${stem}-web.azurewebsites.net' }
-  { name: 'Factory__Web__ClientSecret', value: '@Microsoft.KeyVault(SecretUri=${vault.properties.vaultUri}secrets/${webSignInSecretName})' }
+  { name: 'Factory__ClientSecret', value: '@Microsoft.KeyVault(SecretUri=${vault.properties.vaultUri}secrets/${webSignInSecretName})' }
   { name: 'Factory__Web__DataProtectionBlobUri', value: '${storage.properties.primaryEndpoints.blob}data-protection/keys.xml' }
   { name: 'Factory__Web__DataProtectionKeyId', value: '${vault.properties.vaultUri}keys/${cookieProtectionKeyName}' }
 ] : [
@@ -154,92 +155,14 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
+module cosmos './cosmos-resources.bicep' = {
   name: '${stem}-cosmos'
-  location: location
-  tags: tags
-  kind: 'GlobalDocumentDB'
-  properties: {
-    databaseAccountOfferType: 'Standard'
-    consistencyPolicy: {
-      defaultConsistencyLevel: 'Strong'
-    }
-    locations: [
-      {
-        locationName: location
-        failoverPriority: 0
-        isZoneRedundant: false
-      }
-    ]
-    backupPolicy: {
-      type: 'Continuous'
-      continuousModeProperties: {
-        tier: 'Continuous30Days'
-      }
-    }
-    publicNetworkAccess: 'Disabled'
-    disableLocalAuth: true
-    minimalTlsVersion: 'Tls12'
-  }
-}
-
-resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-05-15' = {
-  parent: cosmos
-  name: 'plant'
-  properties: {
-    resource: {
-      id: 'plant'
-    }
-  }
-}
-
-resource records 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
-  parent: database
-  name: 'records'
-  properties: {
-    resource: {
-      id: 'records'
-      partitionKey: {
-        paths: [
-          '/scopeId'
-        ]
-        kind: 'Hash'
-        version: 2
-      }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        automatic: true
-        includedPaths: [
-          { path: '/type/?' }
-          { path: '/plantId/?' }
-          { path: '/lineId/?' }
-          { path: '/state/?' }
-          { path: '/submittedAt/?' }
-          { path: '/assignmentId/?' }
-          { path: '/id/?' }
-          { path: '/principal/tenantId/?' }
-          { path: '/principal/objectId/?' }
-        ]
-        excludedPaths: [
-          { path: '/*' }
-        ]
-      }
-    }
-    options: {
-      autoscaleSettings: {
-        maxThroughput: cosmosMaxThroughput
-      }
-    }
-  }
-}
-
-resource cosmosDataAccess 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
-  parent: cosmos
-  name: guid(cosmos.id, dataIdentity.id, 'plant-data')
-  properties: {
-    principalId: dataIdentity.properties.principalId
-    roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
-    scope: '${cosmos.id}/dbs/${database.name}'
+  params: {
+    accountName: cosmosAccountName
+    location: location
+    servicePrincipalObjectId: dataIdentity.properties.principalId
+    maxThroughput: cosmosMaxThroughput
+    tags: tags
   }
 }
 
@@ -355,7 +278,7 @@ resource cookieProtectionAccess 'Microsoft.Authorization/roleAssignments@2022-04
 var privateServices = [
   {
     name: 'cosmos'
-    resourceId: cosmos.id
+    resourceId: resourceId('Microsoft.DocumentDB/databaseAccounts', cosmosAccountName)
     groupId: 'Sql'
     zone: 'privatelink.documents.azure.com'
   }
@@ -411,6 +334,9 @@ resource endpoints 'Microsoft.Network/privateEndpoints@2024-05-01' = [for servic
       }
     ]
   }
+  dependsOn: [
+    cosmos
+  ]
 }]
 
 resource dnsGroups 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = [for (service, index) in privateServices: {
@@ -485,9 +411,9 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'Factory__TenantId', value: tenant().tenantId }
         { name: 'Factory__ClientId', value: apiClientId }
-        { name: 'Factory__CosmosEndpoint', value: cosmos.properties.documentEndpoint }
-        { name: 'Factory__CosmosDatabase', value: database.name }
-        { name: 'Factory__CosmosContainer', value: records.name }
+        { name: 'Factory__CosmosEndpoint', value: cosmos.outputs.endpoint }
+        { name: 'Factory__CosmosDatabase', value: cosmos.outputs.databaseName }
+        { name: 'Factory__CosmosContainer', value: cosmos.outputs.containerName }
         { name: 'Factory__DataCredential', value: 'ManagedIdentity' }
         { name: 'Factory__DataIdentityClientId', value: dataIdentity.properties.clientId }
         { name: 'Factory__PaginationKeyRingPath', value: '/home/data/factory-pagination-keys' }
@@ -495,7 +421,6 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
     }
   }
   dependsOn: [
-    cosmosDataAccess
     blobDataAccess
     webCredentialAccess
     cookieProtectionAccess
@@ -524,7 +449,7 @@ output serviceUrl string = 'https://${web.properties.defaultHostName}'
 output webAppName string = web.name
 output dataIdentityClientId string = dataIdentity.properties.clientId
 output provisioningIdentityClientId string = provisioningIdentity.properties.clientId
-output cosmosEndpoint string = cosmos.properties.documentEndpoint
+output cosmosEndpoint string = cosmos.outputs.endpoint
 output storageBlobEndpoint string = storage.properties.primaryEndpoints.blob
 output vaultUri string = vault.properties.vaultUri
 output applicationInsightsConnectionString string = insights.properties.ConnectionString

@@ -20,7 +20,8 @@ public static class WebsiteAuthentication
     public const string UserPolicy = "web-user";
     public const string CreatorPolicy = "web-creator";
 
-    public static bool AddFactoryWebsite(this IServiceCollection services, IConfiguration configuration, IDataProtectionBuilder protection)
+    public static bool AddFactoryWebsite(this IServiceCollection services, IConfiguration configuration,
+        IHostEnvironment environment, IDataProtectionBuilder protection)
     {
         var enabled = configuration.GetValue<bool>("Factory:Web:Enabled");
         services.AddOptions<WebsiteSettings>().BindConfiguration("Factory:Web");
@@ -79,12 +80,12 @@ public static class WebsiteAuthentication
         {
             authentication.AddMicrosoftIdentityWebApp(configuration.GetSection("Factory:Web"),
                 openIdConnectScheme: OidcScheme, cookieScheme: null);
-            services.AddOptions<MicrosoftIdentityOptions>(OidcScheme).Configure<ApiSettings, WebsiteSettings>((options, api, web) =>
+            services.AddOptions<MicrosoftIdentityOptions>(OidcScheme).Configure<ApiSettings>((options, api) =>
             {
                 options.Instance = "https://login.microsoftonline.com/";
                 options.TenantId = api.TenantId;
                 options.ClientId = api.ClientId;
-                options.ClientSecret = web.ClientSecret;
+                options.ClientSecret = api.ClientSecret;
             });
             services.AddOptions<OpenIdConnectOptions>(OidcScheme).PostConfigure<ApiSettings, WebsiteSettings>((options, api, web) =>
             {
@@ -146,12 +147,15 @@ public static class WebsiteAuthentication
                     return Task.CompletedTask;
                 };
             });
-            protection.PersistKeysToAzureBlobStorage(services => new BlobClient(
+            if (!environment.IsDevelopment())
+            {
+                protection.PersistKeysToAzureBlobStorage(services => new BlobClient(
                     new Uri(services.GetRequiredService<Microsoft.Extensions.Options.IOptions<WebsiteSettings>>().Value.DataProtectionBlobUri),
                     services.GetRequiredService<TokenCredential>()))
                 .ProtectKeysWithAzureKeyVault(
                     services => new Uri(services.GetRequiredService<Microsoft.Extensions.Options.IOptions<WebsiteSettings>>().Value.DataProtectionKeyId),
                     services => services.GetRequiredService<TokenCredential>());
+            }
         }
 
         services.Configure<AuthenticationOptions>(options =>
