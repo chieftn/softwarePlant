@@ -85,7 +85,7 @@ $authorized = @($api['preAuthorizedApplications'] | Where-Object { $_ -and $_.ap
 $authorized += @{ appId = $installer.appId; delegatedPermissionIds = @($scopes[0].id) }
 $api['preAuthorizedApplications'] = $authorized
 Invoke-FactoryGraph -Method PATCH -Path "applications/$($apiApp.id)" -Body @{ api = $api } | Out-Null
-$graph = Invoke-FactoryGraph -Path "servicePrincipals(appId='00000003-0000-0000-c000-000000000000')?`$select=id,appRoles"
+$graph = Invoke-FactoryAz @('ad', 'sp', 'show', '--id', '00000003-0000-0000-c000-000000000000', '--query', '{id:id,appRoles:appRoles}')
 $assignments = @()
 $page = Invoke-FactoryGraph -Path "servicePrincipals/$($provisioner.id)/appRoleAssignments"
 while ($null -ne $page) {

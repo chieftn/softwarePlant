@@ -29,6 +29,13 @@ param dataProtectionKeyId string = ''
 @description('Versionless Key Vault secret URI, not a credential value.')
 param webClientSecretUri string = ''
 
+@description('Dedicated existing enrollment identity. Supplying a name attaches it even while enrollment is disabled.')
+param provisioningIdentityName string = ''
+
+@description('Enable only after installer registration and explicitly approved provisioner Graph grants are configured.')
+param enrollmentEnabled bool = false
+param installerClientId string = ''
+
 param tags object = {
   application: 'Factory'
   environment: 'production'
@@ -40,6 +47,10 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' existing = {
 
 resource dataIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: dataIdentityName
+}
+
+resource provisioningIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = if (!empty(provisioningIdentityName)) {
+  name: provisioningIdentityName
 }
 
 resource network 'Microsoft.Network/virtualNetworks@2024-05-01' existing = {
@@ -72,9 +83,11 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
   kind: 'app,linux'
   identity: {
     type: 'UserAssigned'
-    userAssignedIdentities: {
+    userAssignedIdentities: union({
       '${dataIdentity.id}': {}
-    }
+    }, !empty(provisioningIdentityName) ? {
+      '${provisioningIdentity!.id}': {}
+    } : {})
   }
   properties: {
     serverFarmId: plan.id
@@ -108,12 +121,17 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'Factory__SupportedProtocolVersions__0', value: '1' }
         { name: 'Factory__SupportedAssignmentSchemaVersions__0', value: '1' }
         { name: 'Factory__Web__Enabled', value: string(webEnabled) }
-        { name: 'Factory__Enrollment__Enabled', value: 'false' }
+        { name: 'Factory__Enrollment__Enabled', value: string(enrollmentEnabled) }
       ], webEnabled ? [
         { name: 'Factory__ClientSecret', value: '@Microsoft.KeyVault(SecretUri=${webClientSecretUri})' }
         { name: 'Factory__Web__PublicOrigin', value: webPublicOrigin }
         { name: 'Factory__Web__DataProtectionBlobUri', value: dataProtectionBlobUri }
         { name: 'Factory__Web__DataProtectionKeyId', value: dataProtectionKeyId }
+      ] : [], enrollmentEnabled ? [
+        { name: 'Factory__Enrollment__InstallerClientId', value: installerClientId }
+        { name: 'Factory__Enrollment__ProvisioningCredential', value: 'ManagedIdentity' }
+        { name: 'Factory__Enrollment__ProvisioningClientId', value: provisioningIdentity!.properties.clientId }
+        { name: 'Factory__Enrollment__ProvisioningObjectId', value: provisioningIdentity!.properties.principalId }
       ] : [])
     }
   }

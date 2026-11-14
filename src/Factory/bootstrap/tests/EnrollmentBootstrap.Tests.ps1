@@ -54,7 +54,10 @@ function az {
             break
         }
         'ad sp' {
-            if ($values[2] -eq 'create') {
+            if ($values[2] -eq 'show' -and (Argument $values '--id') -eq '00000003-0000-0000-c000-000000000000') {
+                $State.Graph
+            }
+            elseif ($values[2] -eq 'create') {
                 $State.HasPrincipal = $true; $State.Writes++
                 @{ id = $Installer; appId = $Installer }
             }
@@ -68,8 +71,7 @@ function az {
             $method = Argument $values '--method'
             $url = Argument $values '--url'
             if ($method -eq 'GET') {
-                if ($url -match 'servicePrincipals\(appId=') { $State.Graph }
-                elseif ($url -match '/appRoleAssignments$') { @{ value = @($State.Assignments) } }
+                if ($url -match '/appRoleAssignments$') { @{ value = @($State.Assignments) } }
                 else { throw "Unexpected Graph read: $url" }
             }
             else {

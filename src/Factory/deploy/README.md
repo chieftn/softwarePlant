@@ -19,7 +19,7 @@ Workbench enrollment has a separate [privileged tenant bootstrap](../bootstrap/t
 
 [`service.production.bicep`](service.production.bicep) adds a Linux plan and .NET 10 App Service to an existing production backend resource group. Supply the app/plan names, location, API client ID, and existing Cosmos account, data identity and VNet names. `planSku` defaults to S1; B1, P0v3 and P1v3 are alternatives requiring explicit cost approval and regional quota checks. It references those backend resources without redeploying them, joins the existing `app-service` subnet, and attaches the existing database-authorized identity. Cosmos public access stays disabled.
 
-The template enables HTTPS, liveness monitoring and filesystem logs, disables FTP/SCM basic publishing credentials, and persists pagination keys under `/home/data`. Browser sign-in defaults to disabled; enrollment stays disabled. It makes no Entra changes. Every supported tier incurs ongoing charges and requires available regional subscription quota; run an ARM what-if before creating resources. Infrastructure deployment does not publish application code: separately publish `Factory.Plant.Service` for `linux-x64`, zip the publish-directory contents at the archive root, and deploy that ZIP using Entra-authenticated `az webapp deploy`. The configured startup command runs `Factory.Plant.Service.dll`.
+The template enables HTTPS, liveness monitoring and filesystem logs, disables FTP/SCM basic publishing credentials, and persists pagination keys under `/home/data`. Browser sign-in and enrollment default to disabled. It makes no Entra changes. Every supported tier incurs ongoing charges and requires available regional subscription quota; run an ARM what-if before creating resources. Infrastructure deployment does not publish application code: separately publish `Factory.Plant.Service` for `linux-x64`, zip the publish-directory contents at the archive root, and deploy that ZIP using Entra-authenticated `az webapp deploy`. The configured startup command runs `Factory.Plant.Service.dll`.
 
 The hosting template alone does not complete website or enrollment setup. The selected Entra registration must separately expose the required delegated scope and app roles before authorized clients can use those flows. `/health/live` does not verify Cosmos or caller authentication.
 
@@ -32,6 +32,12 @@ After explicit approval, append the production HTTPS `/signin-oidc` and `/signou
 Only after these prerequisites are ready, deploy `service.production.bicep` with `webEnabled=true`, `webPublicOrigin`, `dataProtectionBlobUri`, `dataProtectionKeyId` (versionless) and `webClientSecretUri` (versionless), using the support deployment outputs. Preserve these non-secret parameters for later hosting deployments; omitting them disables browser sign-in. The app uses its assigned data identity for the Key Vault reference. Linux App Service private Key Vault references require VNet route-all; the template enables it with browser sign-in. Ensure that subnet routing permits public Entra egress. API-only hosting routes private destinations through the VNet without route-all.
 
 Use the application's OIDC authentication, not App Service Easy Auth. Users need `Factory.User`; plant creation also requires `Factory.PlantCreator`. Verify the live HTTPS authorization-code/PKCE challenge, protected-cookie key access and bearer-only `/v1` boundary. A successful challenge is not a completed human login or a Cosmos data-plane check. Workbench enrollment is a separate configuration.
+
+### Production workbench enrollment
+
+[`enrollment-identity.production.bicep`](enrollment-identity.production.bicep) creates only a dedicated user-assigned managed identity. It grants no Azure data roles or Graph permissions and does not change the app. Supply that identity's name as `provisioningIdentityName` to `service.production.bicep` to retain both the data identity and provisioner on later hosting deployments. The website's Key Vault reference continues to select the data identity.
+
+Complete the [privileged enrollment bootstrap](../bootstrap/tenant/README.md#enable-workbench-enrollment) only after explicit approval of the Graph grants. Set `installerClientId` and `enrollmentEnabled=true` in the hosting parameters when the public installer and managed provisioner are configured. Production provisioning is managed-identity-only; never reuse the data identity. Preserve the existing browser-authentication parameters. The [live installation working document](../../../docs/workbench-installation-test.md) tracks package handoff and machine acceptance separately from service deployment.
 
 ### Private cross-region Cosmos access
 
@@ -93,6 +99,7 @@ az bicep build --file .\src\Factory\deploy\cosmos.nonproduction.bicep --stdout |
 az bicep build --file .\src\Factory\deploy\service.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\website.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\website-credential.production.bicep --stdout | Out-Null
+az bicep build --file .\src\Factory\deploy\enrollment-identity.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\backend-peering.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\main.bicep --stdout | Out-Null
 pwsh -NoProfile -File .\src\Factory\bootstrap\tests\Bootstrap.Tests.ps1

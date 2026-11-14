@@ -41,6 +41,8 @@ Assignment execution, group resolution, automatic certificate rotation, and sign
 
 ## Windows installer and registration
 
+Track the current live deployment prerequisites, installer handoff and acceptance results in the [workbench installation test working document](../../docs/workbench-installation-test.md).
+
 The normal device installation entry point is the **MSI**, not PowerShell. Launch it, then use **Factory Workbench Setup** from the finish page or Start menu. The graphical setup uses its packaged installation profile: sign in with Entra, select a plant, and enroll/start the machine. The user must own that plant or hold plant-scoped `Workbench.Registrar` authority; read-only or resource-scoped access is insufficient. The website has no workbench-create or approval form.
 
 Setup creates a non-exportable RSA machine key and a public certificate in `LocalMachine\My`. Only the public certificate is submitted. The service authorizes and journals enrollment, provisions a dedicated Entra application/service principal and `Workbench.Connect` grant, then verifies an actual matching application token before activation. It never uses the human token for Graph provisioning. Setup also waits for the dedicated Windows Service account to authenticate and publish presence before reporting connected. A connected machine advertises only `plant-connection` and remains `notReady` for execution.
