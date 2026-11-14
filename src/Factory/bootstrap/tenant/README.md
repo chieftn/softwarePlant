@@ -7,7 +7,7 @@ $tenant = '<tenant-id>'
 az login --tenant $tenant
 ```
 
-The operator needs permission to create/manage the application and enterprise application. Assigning app roles to users additionally needs directory assignment privileges (for example, Cloud Application Administrator), not merely Azure subscription Contributor. The script does not grant itself permissions or request Graph application permissions. Permission failures stop the script; have the appropriate tenant administrator perform the failing step or rerun it.
+The operator needs permission to create/manage the application and enterprise application. Assigning app roles to users additionally needs directory assignment privileges (for example, Cloud Application Administrator), not merely Azure subscription Contributor. `Initialize-Tenant.ps1` does not grant itself permissions or request Graph application permissions. The separate enrollment bootstrap below explicitly grants Graph permissions to a dedicated provisioner. Permission failures stop the script; have the appropriate tenant administrator perform the failing step or rerun it.
 
 ## Create or adopt the development registration
 
@@ -66,3 +66,35 @@ The **current production backend needs no app registration or client secret**: i
 ```
 
 That prepares only Entra metadata (`tenant-production.json`), not a hosted website, production credential store or cookie key ring.
+
+## Enable workbench enrollment
+
+This is a separate, privileged **one-time service-administrator step**, not an action required at each workbench. Normal users enroll through the MSI/graphical setup. The website remains read-only for workbench registration.
+
+Prepare a dedicated provisioning identity first: an existing **user-assigned managed identity** attached to the hosted service for production, or a separate single-tenant application/service principal with a client secret for Development. Do not reuse the web/API or Cosmos data-access identity. Production backend bootstrap does not currently create or attach the provisioning identity.
+
+A tenant administrator able to grant Microsoft Graph application permissions (such as Privileged Role Administrator) runs:
+
+```powershell
+.\src\Factory\bootstrap\tenant\Initialize-WorkbenchEnrollment.ps1 `
+    -TenantConfiguration .\src\Factory\artifacts\bootstrap\tenant-development.json `
+    -ProvisioningClientId '<dedicated-provisioner-client-id>' `
+    -ProvisioningCredential ClientSecret `
+    -GrantProvisioningPermissions
+```
+
+For production, select `-Environment production`, the production tenant metadata, and `-ProvisioningCredential ManagedIdentity`. The script requires the exact existing provisioner ID, supports `-WhatIf`, and prompts before changes. A rerun resumes the recorded installer identity; `-InstallerClientId` explicitly adopts an existing compatible public installer app instead of trusting a matching display name.
+
+It creates/configures the installer public client with `http://localhost` browser redirect, delegated `Plant.Access`, and API preauthorization. It grants the provisioner Graph **`Application.ReadWrite.OwnedBy`**, **`Application.Read.All`**, and **`AppRoleAssignment.ReadWrite.All`**. The last grant is broad tenant authority: the service's fixed API/role checks do not narrow the underlying Graph permission. The installer and daemon receive no Graph grants, secrets, or human directory-administration privileges.
+
+Outputs are ignored non-secret metadata (`enrollment-<environment>.json`), a `serviceConfiguration` object, and the five-field `workbench-profile-<environment>.json` consumed by the MSI build. No client secret is created or written to these files. Apply `serviceConfiguration` to the intended service environment. A hosted service must explicitly attach/select the provisioner managed identity and share the Data Protection key ring across instances; default/interactive credential discovery is not supported.
+
+For Development only, create/reuse the dedicated provisioner secret through Entra Certificates & secrets, then apply enrollment settings using a hidden prompt:
+
+```powershell
+.\src\Factory\bootstrap\development\Set-EnrollmentConfiguration.ps1
+```
+
+This writes standard .NET user-secrets through stdin without changing existing web/data credentials. Restart the plant service yourself after configuration. Production rejects client-secret provisioning. An unconfigured service returns `503 enrollment_disabled`; it never seeds a machine identity or provisions using the enrolling user's token.
+
+Build/distribute the [Windows installer](../../README.md#windows-installer-and-registration) with the generated installation profile. Local development HTTPS trust must work for the Windows Service account, not only the interactive browser. Live directory provisioning, private-key ACLs and cold boot require acceptance in an isolated environment before production use.

@@ -29,6 +29,8 @@ public sealed class CosmosRecordStore(Container container) : IRecordStore
             sql += " AND c.principal.tenantId = @tenant AND c.principal.objectId = @object";
         if (query.AfterId is not null)
             sql += " AND c.id > @after";
+        if (query.States is not null)
+            sql += " AND ARRAY_CONTAINS(@states, c.state)";
         sql += " ORDER BY c.id";
         var definition = new QueryDefinition(sql).WithParameter("@limit", query.Limit).WithParameter("@type", query.Type);
         if (query.PlantId is not null)
@@ -37,6 +39,8 @@ public sealed class CosmosRecordStore(Container container) : IRecordStore
             definition.WithParameter("@tenant", query.Principal.TenantId).WithParameter("@object", query.Principal.ObjectId);
         if (query.AfterId is not null)
             definition.WithParameter("@after", query.AfterId);
+        if (query.States is not null)
+            definition.WithParameter("@states", query.States);
 
         using var iterator = container.GetItemQueryIterator<StoreRecord>(definition, requestOptions: new QueryRequestOptions
         {

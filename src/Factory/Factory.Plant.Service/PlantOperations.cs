@@ -12,6 +12,15 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
 {
     private const int Attempts = 3;
 
+    public async Task RequireRegistrarAsync(string plantId, ApiCaller caller, CancellationToken cancellationToken)
+    {
+        var plant = Records.Require<PlantRecord>((await PlantAsync(plantId, cancellationToken)).Record);
+        if (plant.Plant.State != "active" || !Owner(plant, caller) &&
+            !(await AccessAsync(plantId, caller, cancellationToken)).Any(access =>
+                access.WorkbenchId is null && access.Role == "Workbench.Registrar"))
+            throw ApiProblems.Forbidden();
+    }
+
     public async Task<Page<PlantView>> ListPlantsAsync(ApiCaller caller, int pageSize, string? token, CancellationToken cancellationToken)
     {
         var after = pagination.Read(token, caller, "plants", pageSize);

@@ -1,5 +1,9 @@
 <Solution>
   <Project Path="Factory.Contracts/Factory.Contracts.csproj" />
   <Project Path="Factory.Plant.Service/Factory.Plant.Service.csproj" />
+  <Project Path="Factory.Workbench.Host/Factory.Workbench.Host.csproj" />
+  <Project Path="Factory.Workbench/Factory.Workbench.csproj" />
+  <Project Path="Factory.Workbench.Setup/Factory.Workbench.Setup.csproj" />
+  <Project Path="Factory.Workbench.Installer/Factory.Workbench.Installer.csproj" />
   <Project Path="Factory.Tests/Factory.Tests.csproj" />
 </Solution>

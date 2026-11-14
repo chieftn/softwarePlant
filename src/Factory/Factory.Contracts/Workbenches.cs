@@ -52,5 +52,5 @@ public sealed record WorkbenchPresence
 
 public sealed record WorkbenchView(string SchemaVersion, string Id, string PlantId, string Name,
     EntraApplicationPrincipal Identity, string AdmissionState, string ContactState, DateTimeOffset CreatedAt,
-    WorkbenchRegistration? Registration, DateTimeOffset? RegisteredAt, WorkbenchPresence? Presence,
-    DateTimeOffset? LastSeenAt);
+    WorkbenchRegistration? Registration = null, DateTimeOffset? RegisteredAt = null, WorkbenchPresence? Presence = null,
+    DateTimeOffset? LastSeenAt = null);

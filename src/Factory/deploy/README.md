@@ -13,6 +13,32 @@ Both use `cosmos-resources.bicep`. Subscriptions must already exist. Scripts req
 
 Resource names are deterministic from the subscription/resource-group ID, prefix and environment. Preserve those inputs to reuse existing standalone-template resources. Different environments must use separate groups and identities. Handoff files default to ignored `src\Factory\artifacts\bootstrap`; they contain identifiers/endpoints only.
 
+Workbench enrollment has a separate [privileged tenant bootstrap](../bootstrap/tenant/README.md#enable-workbench-enrollment). It creates the public installer registration, grants an explicitly selected existing provisioner Graph permissions, and emits service settings plus a non-secret MSI profile. It does not create Azure resources, attach managed identities to App Service, deploy the new service code, or change the data identity. Production must separately create/attach the dedicated provisioning identity; Development may explicitly select a separate confidential application. None of the backend Bicep entry points grants Graph authority.
+
+## Production API hosting
+
+[`service.production.bicep`](service.production.bicep) adds a Linux plan and .NET 10 App Service to an existing production backend resource group. Supply the app/plan names, location, API client ID, and existing Cosmos account, data identity and VNet names. `planSku` defaults to S1; B1, P0v3 and P1v3 are alternatives requiring explicit cost approval and regional quota checks. It references those backend resources without redeploying them, joins the existing `app-service` subnet, and attaches the existing database-authorized identity. Cosmos public access stays disabled.
+
+The template enables HTTPS, liveness monitoring and filesystem logs, disables FTP/SCM basic publishing credentials, and persists pagination keys under `/home/data`. Browser sign-in defaults to disabled; enrollment stays disabled. It makes no Entra changes. Every supported tier incurs ongoing charges and requires available regional subscription quota; run an ARM what-if before creating resources. Infrastructure deployment does not publish application code: separately publish `Factory.Plant.Service` for `linux-x64`, zip the publish-directory contents at the archive root, and deploy that ZIP using Entra-authenticated `az webapp deploy`. The configured startup command runs `Factory.Plant.Service.dll`.
+
+The hosting template alone does not complete website or enrollment setup. The selected Entra registration must separately expose the required delegated scope and app roles before authorized clients can use those flows. `/health/live` does not verify Cosmos or caller authentication.
+
+### Production browser sign-in
+
+[`website.production.bicep`](website.production.bicep) adds website support to an existing deployment: private, key-auth-disabled Blob storage with a `data-protection` container; a private RBAC Key Vault with a software RSA cookie-protection key; two private endpoints; private DNS zones and links to the application VNet. Vault public network access stays disabled; its trusted Azure-services bypass allows ARM to provision the key and secret. The existing data identity receives Blob Data Contributor at the container and Crypto User at the key. It does not redeploy Cosmos, the plan, the app or the VNet.
+
+After explicit approval, append the production HTTPS `/signin-oidc` and `/signout-callback-oidc` URLs to the selected Entra registration without removing existing callbacks. Create an additional, bounded-lifetime confidential-client credential without resetting existing credentials. [`website-credential.production.bicep`](website-credential.production.bicep) stores it in Key Vault and grants the data identity Secrets User at that secret only. Its `clientSecret` parameter is secure; submit the deployment through an in-memory ARM request. Never place credential values in parameter files, shell arguments, deployment outputs or source control. Set `expiresOn` to the credential's Unix expiration timestamp and rotate before expiry.
+
+Only after these prerequisites are ready, deploy `service.production.bicep` with `webEnabled=true`, `webPublicOrigin`, `dataProtectionBlobUri`, `dataProtectionKeyId` (versionless) and `webClientSecretUri` (versionless), using the support deployment outputs. Preserve these non-secret parameters for later hosting deployments; omitting them disables browser sign-in. The app uses its assigned data identity for the Key Vault reference. Linux App Service private Key Vault references require VNet route-all; the template enables it with browser sign-in. Ensure that subnet routing permits public Entra egress. API-only hosting routes private destinations through the VNet without route-all.
+
+Use the application's OIDC authentication, not App Service Easy Auth. Users need `Factory.User`; plant creation also requires `Factory.PlantCreator`. Verify the live HTTPS authorization-code/PKCE challenge, protected-cookie key access and bearer-only `/v1` boundary. A successful challenge is not a completed human login or a Cosmos data-plane check. Workbench enrollment is a separate configuration.
+
+### Private cross-region Cosmos access
+
+[`backend-peering.bicep`](backend-peering.bicep) connects existing, non-overlapping application and Cosmos VNets in the same resource group. Supply `appVnetName` and `cosmosVnetName`. It creates both peering directions with virtual-network access enabled and forwarding/gateway transit disabled. It does not create a web app or database, grant data access, or enable public Cosmos access. Cross-region peering incurs traffic charges.
+
+The application must integrate with its local delegated subnet; both VNets need links to the Cosmos private DNS zone. Configure the future app with the existing Cosmos endpoint, selected database/container, and an assigned managed identity already authorized for that database. Peering does not grant Cosmos data permissions. Verify DNS resolution and an authenticated database operation from the application after it is deployed; connected peerings alone do not prove application connectivity.
+
 ## Shared Cosmos settings
 
 | Setting | Definition |
@@ -39,7 +65,7 @@ Browser sign-in authenticates users **to ASP.NET**. The ASP.NET process separate
 
 The shared module defaults to **public access Disabled**. Only the nonproduction wrapper enables it. An empty IP list alone never enables public access.
 
-Production reserves the application subnet for later service hosting; no service is attached yet. A machine outside the VNet has no production data path. Development defaults deliberately favor local reachability while retaining mandatory Entra service authentication.
+Backend-only production deployments reserve the application subnet for later service hosting. A machine outside the VNet has no production data path. Development defaults deliberately favor local reachability while retaining mandatory Entra service authentication.
 
 ## Cost, permissions and operations
 
@@ -64,8 +90,13 @@ These compile templates without Azure sign-in or deployment:
 ```powershell
 az bicep build --file .\src\Factory\deploy\cosmos.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\cosmos.nonproduction.bicep --stdout | Out-Null
+az bicep build --file .\src\Factory\deploy\service.production.bicep --stdout | Out-Null
+az bicep build --file .\src\Factory\deploy\website.production.bicep --stdout | Out-Null
+az bicep build --file .\src\Factory\deploy\website-credential.production.bicep --stdout | Out-Null
+az bicep build --file .\src\Factory\deploy\backend-peering.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\main.bicep --stdout | Out-Null
 pwsh -NoProfile -File .\src\Factory\bootstrap\tests\Bootstrap.Tests.ps1
+pwsh -NoProfile -File .\src\Factory\bootstrap\tests\EnrollmentBootstrap.Tests.ps1
 ```
 
 Local checks cannot establish quota, deployment authorization, data-plane connectivity or a running website.

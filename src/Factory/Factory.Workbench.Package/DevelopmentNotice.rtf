@@ -1,0 +1,8 @@
+{\rtf1\ansi\deff0{\fonttbl{\f0 Segoe UI;}}\f0\fs20
+\b Factory Workbench development installer\b0\par\par
+This development build is unsigned. Install it only from a build and installation profile you trust.\par\par
+Setup installs machine-wide tools and a runtime payload. The guided setup then signs you into Entra, enrolls this machine with your plant, and installs a dedicated boot-time Windows Service. Your account must own the plant or have plant-scoped registration authority.\par\par
+Worker execution and WSL integration are disabled. The plant reports connected machines as not ready for execution.\par\par
+Uninstall removes the service and owned runtime releases but retains machine identity, configuration, certificates, and journals. Uninstall does not revoke the remote identity.\par\par
+Do not treat this development build as a signed production distribution or a cold-boot acceptance result.\par
+}

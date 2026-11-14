@@ -20,7 +20,7 @@ public sealed record PlantWriteRequest
 public sealed record PlantView(string SchemaVersion, string Id, string Name, EntraPrincipal Owner,
     string State, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 
-public sealed record Page<T>(string SchemaVersion, IReadOnlyList<T> Items, string? ContinuationToken);
+public sealed record Page<T>(string SchemaVersion, IReadOnlyList<T> Items, string? ContinuationToken = null);
 
 public sealed class ContractValidationException(string message) : Exception(message);
 

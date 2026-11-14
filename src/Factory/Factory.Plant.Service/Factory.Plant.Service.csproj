@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup>  <UserSecretsId>94f0f0f9-ab3f-4ec5-bd27-6d6be377ed17</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Factory.Tests" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.15" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.15" />
     <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.64.0" />

@@ -53,8 +53,7 @@ Service-level `Factory.PlantCreator` authority permits creation. Create the plan
 | Plant role | Authority |
 |---|---|
 | Owner | Manage the plant, its scoped access assignments, resource admission, and owner transfer. |
-| `Workbench.Registrar` | Register, approve, recover, and revoke workbench identities in this plant; cannot assign roles or administer Entra directly. |
-| `Plant.EnrollmentRequester` | Submit enrollment requests and inspect their own requests; cannot approve them. |
+| `Workbench.Registrar` | Authorize client-initiated workbench registration and recover/revoke identities in this plant; cannot assign roles or administer Entra directly. |
 | `Plant.Operator` | Operate approved resources and reconcile execution within scope; line/workload grants remain separate. |
 | `Plant.Reader` | Read authorized plant/resource state without mutation. |
 
@@ -99,7 +98,7 @@ The data-access identity has no Graph write permissions. A separate, explicitly 
 
 Use server-rendered HTML with a pinned, self-hosted Datastar library for reactive signals and HTML updates. Do not require a SPA framework, a browser-side copy of the domain model, or a full client-side router. Select the server template renderer during implementation; it must support safe HTML/attribute escaping and reusable fragments.
 
-The first page lists plants the signed-in user can access, not all plants. A plant page shows its owner, effective role assignments, resources, enrollment requests, and execution state. Provide owner/role management and workbench admission through the same application operations used by the API.
+The first page lists plants the signed-in user can access, not all plants. A plant page shows its owner, effective role assignments, resources, and execution state. Workbench registration is read-only on the website: show inventory, capabilities, and status, without create or approval controls. Enrollment starts in setup on the workbench. Owner/role management uses the same application operations as the API.
 
 Use signals for local interaction state such as filters, selections, and pending actions. The server authorizes every action, commits the operation, and returns HTML and/or signal patches. A browser patch is not evidence that a background operation completed.
 
@@ -120,7 +119,7 @@ Do not trust caller-supplied identity headers. Derive identity from the validate
 | Caller | Authentication / service-entry permission | Additional service restriction |
 |---|---|---|
 | Web user | Entra sign-in and `Factory.User` service-entry role | Owner or scoped database role determines plant/resource actions. |
-| Installer user | Delegated `Plant.Access` scope and `Factory.User` role | Owner/registrar may authorize enrollment; request-only role requires separate approval. |
+| Installer user | Delegated `Plant.Access` scope and `Factory.User` role | Current owner or plant-scoped registrar authorizes enrollment in local setup; no separate approval path. |
 | Plant creator | Human authentication plus `Factory.PlantCreator` role | May create a plant and become its initial owner; no access to unrelated plants. |
 | Line operator | Human authentication plus explicit line grant | Submit/read/cancel work only within authorized lines and plant resource bindings. |
 | MAF line coordinator | Application `Line.Coordinator` role | Bind its tenant/object ID to specific lines and allowed workbenches. |
@@ -136,15 +135,15 @@ Evaluate current admission and scoped grants on each mutation; do not rely solel
 
 ## Background Enrollment and Credential Provisioning
 
-Enrollment follows RFC 001. Return `202 Accepted` only after committing the request, its approval decision, and durable operation state. An owner/registrar's explicit submission can approve immediately; request-only users need an authorized approver. Record requester and approver identities independently from the resulting daemon identity.
+Enrollment follows RFC 001. Return `202 Accepted` only after committing the draft, the enrolling owner/registrar's authorization and audit event, and durable operation state. The authorized user's explicit submission authorizes enrollment; there is no request-only role, separate approver, or website approval step. Record the human actor independently from the resulting daemon identity.
 
-Persist `pending`, `approved`, `provisioning`, `ready`, `active`, `denied`, `failed`, `needsAttention`, and `revoked` states with actor/time, retry metadata, and completed directory steps. The operation must survive application restart and the user's logout; never implement it as a request-scoped or fire-and-forget task.
+Persist enrollment states `authorized`, `provisioning`, `ready`, `active`, `failed`, and `needsAttention`, with actor/time, retry metadata, and completed directory steps. Machine admission separately records `pending`, `active`, or `revoked`. The operation must survive application restart and the user's logout; never implement it as a request-scoped or fire-and-forget task.
 
-Use a hosted background worker with renewable Cosmos-backed reservations and conditional progress updates. Recheck the plant's state and the approving principal's current authority before provisioning/activation. Identify directory objects by stored IDs and enrollment markers. Reconcile uncertain Graph responses before another mutation; an ambiguous create moves to `needsAttention` rather than risking a duplicate identity.
+Use a hosted background worker with Cosmos-backed reservations and conditional progress updates. Bound directory steps to less than the reservation lifetime. Recheck the plant's state and the enrolling principal's current authority before provisioning/first activation. Identify directory objects by stored IDs and enrollment markers, verify provisioner ownership, and reserve the installation's workbench address before creating an identity. Reconcile uncertain Graph responses before another mutation; an unresolved create moves to `needsAttention` rather than risking a duplicate identity.
 
-Create the application/service principal, attach only the public certificate, grant the configured API role, and store the plant/workbench identity binding. Activate only after the actual daemon token matches that binding. Directory writes and Cosmos transitions are not one transaction. Revoked approval, missing tenant consent, propagation delay, and partial provisioning must remain visible and non-executable; reconcile any directory side effects before cleanup.
+Create the application/service principal, attach only the public certificate, grant the configured API role, and store the plant/workbench identity binding. Activate only after the actual daemon token matches that binding. Once active, routine startup does not depend on the enrolling user's session or continued plant authority; current machine admission still applies. Directory writes and Cosmos transitions are not one transaction. Lost registration authority before activation, missing tenant consent, propagation delay, and partial provisioning must remain visible and non-executable; reconcile any directory side effects before cleanup.
 
-The same mechanism performs approved credential rotation and revocation. A signed-in user need not be a directory administrator, and no operator script is required for normal enrollment. Provisioning endpoints never accept arbitrary Graph requests, application targets, or permission grants.
+Credential rotation and revocation must preserve the tracked identity and use the same explicit provisioning boundary; these operations remain unimplemented in the current connection-only slice. A signed-in user need not be a directory administrator, and no operator script is required for normal enrollment after the one-time administrator bootstrap. Provisioning endpoints never accept arbitrary Graph requests, application targets, or permission grants.
 
 ## Document Layout
 
@@ -155,7 +154,7 @@ Use a common envelope: `id`, `scopeId`, `type`, `schemaVersion`, plant/line iden
 | `plant:<id>:settings` | Plant identity, owner binding, lifecycle/policy, plant/resource-scoped access assignments, and audit records. Not a whole-plant resource directory. |
 | `plant:<id>:workbench:<id>` | Admission/identity record, credential operations, separate presence record, execution slot, assignments, claim receipts, results, and mutation audit records. |
 | `plant:<id>:line:<id>` | Immutable line revisions, repository/integration settings, coordinator/user grants, and line-to-workbench bindings. |
-| `plant:<id>:enrollment:<id>` | Enrollment request, public-key fingerprint, approval/provisioning progress, background reservation/checkpoints, and audit records. |
+| `plant:<id>:enrollment:<id>` | Enrollment draft/public certificate, authorizing human, provisioning progress, background reservation/checkpoints, and audit records. |
 
 The same container can hold these document types; separation does not imply a service or container per type. Presence updates touch only presence, not the execution slot or a global registry.
 
@@ -199,9 +198,9 @@ Use `/v1/plants/{plantId}` as the authenticated base `P` below. Define JSON sche
 | Discovery | `GET /.well-known/plant-config`: public API/protocol versions and expected public authentication metadata. No registry or secrets. |
 | Plants | `GET /v1/plants`: paginated accessible plants. `POST /v1/plants`: creator-authorized, idempotent creation and initial owner binding. |
 | Plant access | `GET P`, scoped role-assignment operations, and owner transfer: enforce owner/manage-access authority and prevent owner removal without replacement. |
-| Enrollment | `POST P/enrollment-challenges`, `POST P/enrollments`, `GET P/enrollments/{id}`: requester-scoped challenge, signed request, and resumable status. |
-| Admission | `POST P/enrollments/{id}/approve` or `/deny`: plant owner/registrar decisions. Provisioning/finalization are internal background transitions, not client-controlled directory calls. |
-| Activation | `POST P/workbenches/{id}/activate`: verify the approved application-token binding. |
+| Enrollment | `POST P/enrollments`, `GET P/enrollments/{operationId}`: owner/registrar-authorized signed submission and resumable status. |
+| Enrollment proof | `POST P/enrollments/challenge`: bind a short-lived possession challenge to the plant, human and immutable machine draft. |
+| Activation | `POST P/enrollments/{operationId}/activate`: verify the exact provisioned application-token binding before first activation. |
 | Credentials | Claim-independent, workbench-bound rotation operations with old/new key proof; owner/registrar-authorized recovery and revocation. Return durable operation status, not immediate directory success. |
 | Registration | `PUT P/workbenches/{id}/registration`: update observed machine metadata, installed versions, and capabilities; cannot change identity, admission, or local limits remotely. |
 | Presence | `PUT P/workbenches/{id}/presence`: bounded current status, separate from queue ownership. |
@@ -263,7 +262,7 @@ Acceptance requires no duplicate ownership or lost terminal results, no cross-li
 1. Implement plant creation/ownership, scoped authorization, both authentication paths, and the HTML/Datastar application against separate test plants.
 2. Build durable server-side provisioning and the installer flow from RFC 001. Demonstrate enrollment by a plant registrar without directory privileges, an operator script, or a continuing user session.
 3. Exercise two workbenches producing separate verified PRs, then interruption, revocation, rotation, and the synthetic fleet tests.
-4. Verify cross-plant denial, owner transfer, inherited/resource-scoped roles, request-only approval, job recovery without duplicate directory objects, and missing provisioning consent.
+4. Verify cross-plant denial, owner transfer, inherited/resource-scoped roles, owner/plant-registrar enrollment without separate approval, job recovery without duplicate directory objects, and missing provisioning consent.
 5. Verify cookie/antiforgery behavior, bearer-only API responses, shared cookie keys across instances, and authorized Datastar reconnect after role revocation.
 
 No Azure provisioning, identity grants, or package rollout is authorized by accepting these draft documents alone.

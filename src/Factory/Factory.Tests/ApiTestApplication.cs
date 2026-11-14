@@ -159,6 +159,7 @@ public sealed class TestRecordStore : IRecordStore
                 .Where(record => Type(record) == query.Type && (query.PlantId is null || record.PlantId == query.PlantId) &&
                     (query.ScopeId is null || record.ScopeId == query.ScopeId) &&
                     (query.Principal is null || record is AccessRecord access && access.Principal == query.Principal) &&
+                    (query.States is null || record is EnrollmentRecord enrollment && query.States.Contains(enrollment.State)) &&
                     (query.AfterId is null || StringComparer.Ordinal.Compare(record.Id, query.AfterId) > 0))
                 .OrderBy(record => record.Id, StringComparer.Ordinal).Take(query.Limit).Select(Clone).ToArray();
             return Task.FromResult(result);

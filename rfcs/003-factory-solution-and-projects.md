@@ -19,6 +19,10 @@ src\Factory\
     Factory.slnx
     Factory.Contracts\
     Factory.Plant.Service\
+    Factory.Workbench\
+    Factory.Workbench.Setup\
+    Factory.Workbench.Installer\
+    Factory.Workbench.Package\
     Factory.Workbench.Host\
     Factory.Workbench.Worker\
     Factory.Tests\
@@ -31,7 +35,11 @@ src\Factory\
 |---|---|---|
 | `Factory.Contracts` | Versioned API payloads, assignment snapshots, configuration, results, events, and shared structural validation. | .NET serialization; no hosting, database, or agent SDK. |
 | `Factory.Plant.Service` | HTML/Datastar web application, JSON API, plant ownership/scoped access, durable background Entra provisioning, line bindings, queues, claims, persistence, artifacts, and server telemetry. | Contracts, ASP.NET Core, Entra OpenID Connect/token validation, Microsoft Graph, Cosmos DB, Azure Storage, Azure Monitor, and self-hosted Datastar. |
-| `Factory.Workbench.Host` | Windows configuration and certificate access, outbound service connection, local policy, durable journals, WSL process management, and result delivery. | Contracts, Azure Identity/MSAL as required, Windows and process APIs. |
+| `Factory.Workbench` | Shared local configuration/state, ownership locks, enrollment journals, machine certificates, bearer connection and durable reports used by setup and host. | Contracts, MSAL and .NET filesystem/cryptography APIs; no service control or agent SDK. |
+| `Factory.Workbench.Setup` | Guided configuration, service registration/control, package installation, update/rollback, interrupted-maintenance recovery, and state-preserving uninstall. | Shared Workbench library, Windows Service Control Manager and installation APIs. |
+| `Factory.Workbench.Installer` | Elevated graphical sign-in, plant selection, enrollment/resume, service installation and connection verification. | Setup, shared Workbench, Windows Forms and MSAL. |
+| `Factory.Workbench.Package` | Machine-wide MSI, Installed Apps/start-menu integration, and transactional maintenance hooks. Owns tools/payload, not runtime-managed releases. | Pinned WiX SDK and published setup/runtime outputs; built separately from the .NET solution. |
+| `Factory.Workbench.Host` | Windows Service lifetime, certificate access, outbound service connection, local policy, execution journals/recovery, WSL process management, and result delivery. No interactive setup or binary/service-registration changes. | Shared Workbench library, Contracts, Azure Identity/MSAL as required, Windows hosting and process APIs. |
 | `Factory.Workbench.Worker` | Linux checkout, dependency preparation, MAF/Copilot execution, independent verification, commit, permitted publication, and execution evidence. | Contracts, MAF/Copilot SDK, Git, and the GitHub adapter. |
 | `Factory.Tests` | Contract, scoped authorization, browser/API authentication, provisioning recovery, queue-ownership, policy, and execution tests; service/host integration and synthetic fleet scenarios. | The production projects and test tooling. Platform-specific checks require the corresponding Windows/WSL or deployed test environment. |
 
@@ -39,12 +47,14 @@ Target .NET 10. Host and worker are separate executables because their operating
 
 ## Dependency Boundaries
 
-The service, host, and worker reference `Factory.Contracts`, not each other's implementations.
+The service and worker reference `Factory.Contracts`, not each other's implementations. Setup and host share concrete local state/configuration support through `Factory.Workbench`; neither executable references the other.
 
 ```text
-Factory.Plant.Service ----\
-Factory.Workbench.Host ---+--> Factory.Contracts
-Factory.Workbench.Worker -/
+Factory.Plant.Service -----------------------> Factory.Contracts
+Factory.Workbench.Setup --\                             ^
+                          +--> Factory.Workbench ------|
+Factory.Workbench.Host ---/                             |
+Factory.Workbench.Worker -------------------------------/
 ```
 
 The host calls the service over HTTPS and launches the Linux worker through WSL using serialized contracts. The service does not reference the worker executable, load MAF to process queue requests, or access workbench credentials.
@@ -63,7 +73,7 @@ Do not add a generic orchestration project before specifying the first coordinat
 
 ## Setup and Deployment
 
-`setup` contains guided workbench installation, configuration, inspection, and startup tooling specified by RFC 001.
+`setup` contains development publication scripts and the MSI build entry point. End users launch the MSI and graphical setup; PowerShell remains developer/admin automation, not the normal device installation experience. The MSI owns the setup tools and source payload. `Factory.Workbench.Setup` owns staged runtime releases and dynamic service registration, and exposes deferred/rollback/commit hooks to MSI maintenance. This avoids having both MSI and runtime maintenance delete the same files. Uninstall preserves configuration, certificates, binding, and journals; it does not retire the remote identity. The runtime host owns boot-time execution under its dedicated service identity; WSL and unattended credential support must pass RFC 001's acceptance gate.
 
 `deploy` contains Azure infrastructure definitions, service deployment, and the one-time privileged Entra bootstrap tooling specified by RFC 002. Normal device provisioning runs in the service using its administrator-approved provisioning identity. Human directory credentials must not become service or workbench runtime dependencies; the installer and daemon receive no Graph permissions.
 

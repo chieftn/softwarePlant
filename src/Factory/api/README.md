@@ -9,7 +9,7 @@
 | POST | `/v1/plants` | Create a plant with the authenticated user as owner. |
 | PUT | `/v1/plants/{plantId}` | Replace editable properties (currently name), using If-Match. Does not upsert. |
 
-Creation and update accept `schemaVersion: "1"` and `name`. Owner, IDs, lifecycle state and timestamps are server-controlled. Creating a plant does not provision infrastructure. Ownership transfer, role management, lifecycle transitions, resources, enrollment, and deletion are outside this increment.
+Creation and update accept `schemaVersion: "1"` and `name`. Owner, IDs, lifecycle state and timestamps are server-controlled. Creating a plant does not provision infrastructure. Ownership transfer, role management, lifecycle transitions, execution, and deletion are outside this increment.
 
 The contract requires Entra bearer authentication, current plant authority, mutation idempotency and conditional updates. It defines JSON responses and Problem Details; browser cookies and HTML redirects do not authenticate the REST API. Future HTML/Datastar actions will use the same application operations under their own cookie/antiforgery boundary.
 
@@ -28,7 +28,20 @@ Inventory uses delegated human authentication. Resource-scoped readers see only 
 
 Registration and presence return 204 after persistence. Both require `schemaVersion: "1"` and an `Idempotency-Key`; an identical retry does not refresh server timestamps. A fresh report needs a fresh key, and the daemon resolves outstanding reports before sending newer ones. Presence is nominally reported every 30 seconds and becomes stale after 90 seconds.
 
-Admission, reported availability and contact freshness are separate. Reported capabilities are not permission grants. Registration does not enroll or activate a machine, and presence never claims work, heartbeats an assignment or frees an execution slot. Enrollment, credentials, execution and operator controls remain outside this slice. No generic workbench-create endpoint is defined.
+Admission, reported availability and contact freshness are separate. Reported capabilities are not permission grants. Registration does not enroll or activate a machine, and presence never claims work, heartbeats an assignment or frees an execution slot. Execution and operator controls remain outside this slice. No generic workbench-create endpoint is defined.
+
+## Device-Initiated Enrollment
+
+| Method | Route | Purpose |
+|---|---|---|
+| POST | `P/enrollments/challenge` | Owner/plant-registrar challenge for an immutable machine draft and public certificate. |
+| POST | `P/enrollments` | Verify key possession and persist authorized background provisioning; return 202/status URL. |
+| GET | `P/enrollments/{operationId}` | Current state for the original enrolling principal with current plant authority. |
+| POST | `P/enrollments/{operationId}/activate` | Match the actual provisioned application token before activating its pending admission. |
+
+No separate approver or website enrollment mutation exists. Persist the original operation ID/key before submitting. Retrying an identical draft may use a fresh challenge; changing the draft under that ID returns 409. Provisioning checkpoints, per-installation reservations, ownership/public-key reconciliation, and conditional writes prevent blind duplicate directory creation. `needsAttention` requires administrator reconciliation, not a new identity.
+
+Enrollment is disabled without explicit server provisioning configuration. The installer receives neither a client secret nor Graph grants; the background worker uses the administrator-configured provisioner. The resulting machine uses its own certificate for `Workbench.Connect`, never the human's token. Website inventory remains read-only. See [bootstrap](../bootstrap/tenant/README.md#enable-workbench-enrollment) and [installer](../README.md#windows-installer-and-registration).
 
 ## Validation
 

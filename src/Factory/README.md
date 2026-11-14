@@ -1,6 +1,6 @@
 # Factory
 
-ASP.NET Core/.NET 10 REST service and Razor website for [RFC 003](../../rfcs/003-factory-solution-and-projects.md). The existing `src\Workbench` implementation and deployment are unchanged.
+ASP.NET Core/.NET 10 REST service, Razor website, and local Windows workbench setup for [RFC 003](../../rfcs/003-factory-solution-and-projects.md). The existing `src\Workbench` implementation and deployment are unchanged.
 
 ## Bootstrap
 
@@ -22,23 +22,90 @@ Bootstrap handoff files contain identifiers/endpoints, not credentials, and defa
 
 | Location | Implemented |
 |---|---|
-| `Factory.Contracts` | Plant and workbench registration/presence contracts and structural validation. |
-| `Factory.Plant.Service` | Entra bearer API, separate browser sign-in, scoped authorization, Cosmos persistence and Razor plant/workbench pages. |
-| `Factory.Tests` | Isolated HTTP, authorization, transactions, OIDC/cookies/forms, serialization and OpenAPI checks. |
-| `api` | [Contract for the eight REST operations](api/README.md). |
+| `Factory.Contracts` | Plant, enrollment, machine binding, registration/presence, installation-profile and configuration contracts. |
+| `Factory.Plant.Service` | Entra bearer API, separate browser sign-in, scoped authorization, durable background directory provisioning, Cosmos persistence and Razor inventory. |
+| `Factory.Workbench` | Protected configuration/binding, resumable enrollment, machine CNG certificates, MSAL application tokens, durable reports and runtime state. |
+| `Factory.Workbench.Setup` | Guided configuration and Windows Service installation, run/stop, recovery, update/rollback, and state-preserving uninstall. |
+| `Factory.Workbench.Installer` / `Factory.Workbench.Package` | Graphical enrollment/service setup and a machine-wide Windows MSI with Installed Apps/start-menu integration. |
+| `Factory.Workbench.Host` | Boot-time Windows Service, certificate-authenticated activation/registration/presence, and foreground diagnostics. No WSL or assignment execution. |
+| `Factory.Tests` | Isolated HTTP, authorization, transactions, OIDC/cookies/forms, serialization, OpenAPI and local workbench setup checks. |
+| `api` | [Contract for plant, enrollment and workbench REST operations](api/README.md). |
 | `bootstrap` / `deploy` | Tiered setup scripts and shared/environment-specific Bicep. |
+| `setup` | Workbench development-package publication and Windows setup entry point. |
 
 The website lists, creates and displays plants and shows workbench inventory. Plant creation atomically records ownership, idempotency and audit data. REST authentication remains bearer-only; browser cookies never authenticate `/v1`.
 
-Enrollment, machine admission, assignment execution, group resolution and workbench release packaging are not implemented. Inventory may be empty; there is no runtime seed, demonstration identity or local persistence substitute. Keep the existing Workbench projects unchanged.
+Assignment execution, group resolution, automatic certificate rotation, and signed production packaging are not implemented. Enrollment is disabled unless an administrator configures the explicit provisioning identity. There is no runtime seed, demonstration identity, interactive-credential fallback or local database substitute. The existing `src\Workbench` projects remain unchanged.
 
 `GET /health/live` proves process liveness only, not Azure connectivity or successful authentication.
+
+## Windows installer and registration
+
+The normal device installation entry point is the **MSI**, not PowerShell. Launch it, then use **Factory Workbench Setup** from the finish page or Start menu. The graphical setup uses its packaged installation profile: sign in with Entra, select a plant, and enroll/start the machine. The user must own that plant or hold plant-scoped `Workbench.Registrar` authority; read-only or resource-scoped access is insufficient. The website has no workbench-create or approval form.
+
+Setup creates a non-exportable RSA machine key and a public certificate in `LocalMachine\My`. Only the public certificate is submitted. The service authorizes and journals enrollment, provisions a dedicated Entra application/service principal and `Workbench.Connect` grant, then verifies an actual matching application token before activation. It never uses the human token for Graph provisioning. Setup also waits for the dedicated Windows Service account to authenticate and publish presence before reporting connected. A connected machine advertises only `plant-connection` and remains `notReady` for execution.
+
+The service administrator first completes [enrollment bootstrap](bootstrap/tenant/README.md#enable-workbench-enrollment). That produces a non-secret `workbench-profile-<environment>.json` with the HTTPS origin and tenant/API/installer IDs. End users do not copy those IDs. Distribute the profile only as part of your trusted installer; setup does not discover authentication authority from an arbitrary website. The HTTPS certificate must be trusted by the machine/service account, not only the enrolling user's browser. Never disable TLS validation for local development.
+
+Developers build the **unsigned development MSI** on Windows x64 with .NET 10:
+
+```powershell
+.\src\Factory\setup\Build-WorkbenchInstaller.ps1 `
+    -ReleaseId dev-001 -Version 0.1.0 `
+    -ProfilePath .\src\Factory\artifacts\bootstrap\workbench-profile-development.json `
+    -AllowUnsignedPackage
+```
+
+The build pins WiX SDK/extensions to 4.0.6 (MS-RL) and publishes self-contained tools/runtime plus an embedded lifecycle helper. It does not install the result. MSI versions increase as three numeric components; never reuse a release ID for different bits. `-SkipMsiValidation` is an explicit build-only option for environments where Windows Installer ICE validation cannot run; it does not constitute a passed installer acceptance check.
+
+MSI owns `%ProgramFiles%\Factory\Workbench Setup` (tools and source payload); lifecycle setup owns `%ProgramFiles%\Factory\Workbench\releases` (selected/previous runtime). A newer MSI updates an existing runtime while preserving identity, configuration, journals and intentional stop/run intent. Rollback restores the prior selection. Installed Apps uninstall stops/removes the service, commits removal of owned runtime releases, and retains machine identity, certificate, binding and journals. It does not revoke the remote identity or purge state. A files-only/quiet first installation still requires an authorized human to complete enrollment in the graphical setup.
+
+Do not run separate graphical or CLI maintenance while an MSI install, update, repair, or uninstall is in progress.
+
+Interrupted enrollment resumes the original journal/operation/key. Lost directory-create responses are reconciled by tracked marker, ownership and public key; the service will not blindly create another identity. `needsAttention` requires administrator reconciliation. Do not delete the journal or submit a replacement operation to work around it. Outstanding registration/presence reports retain their idempotency keys across restart and are resolved before fresh reports.
+
+**Remaining acceptance gates:** production code signing, automatic certificate rotation/authorized key recovery, actual Entra/Graph provisioning, real SCM install/upgrade/uninstall rollback, reboot without logon, and service-owned WSL/worker execution. Certificates currently expire after 180 days; token renewal is automatic, certificate renewal is not. Do not deploy this development slice as an indefinitely self-sustaining production workbench.
+
+## Developer lifecycle tools
+
+These lower-level tools remain available for local development and automation. Requires PowerShell 7 on Windows x64; building additionally requires the .NET 10 SDK. Setup and runtime are separate self-contained executables. Service lifecycle changes require an elevated terminal. Use the graphical installer above for normal sign-in/enrollment.
+
+From the repository root, publish into a fresh output directory, configure, then install your explicitly trusted local development package:
+
+```powershell
+.\src\Factory\setup\Publish-Workbench.ps1 -ReleaseId local-001
+.\src\Factory\artifacts\workbench\Setup-Workbench.ps1 -Action Configure
+.\src\Factory\artifacts\workbench\Setup-Workbench.ps1 -Action Install -AllowUnsignedPackage
+.\src\Factory\artifacts\workbench\Setup-Workbench.ps1 -Action Inspect
+.\src\Factory\artifacts\workbench\Setup-Workbench.ps1 -Action Run
+.\src\Factory\artifacts\workbench\Setup-Workbench.ps1 -Action Status
+.\src\Factory\artifacts\workbench\Setup-Workbench.ps1 -Action Stop
+```
+
+The package contains `setup\Factory.Workbench.Setup.exe`, `host\Factory.Workbench.Host.exe`, the setup script, and a host file-digest manifest. Use the packaged setup tool for maintenance; the installed runtime does not modify its own binaries or service registration.
+
+`Configure` prompts for the plant HTTPS origin and expected tenant/API/installer client IDs from a trusted installation profile, future WSL distribution/user and workspace path, repository allowlist, and local permission limits. WSL selections are stored but neither invoked nor verified in this slice. It shows the non-secret configuration and asks before saving. No credentials, plant binding, or admission are created. Shell execution and publication default to denied; an empty repository allowlist denies all repositories. Enter `-` to clear an existing allowlist. Stop the host before reconfiguration.
+
+State defaults to `%ProgramData%\Factory\Workbench`; use `-StateDirectory` consistently with developer tools to select another installation. The MSI/graphical setup use the default machine root. Configuration, installation metadata, enrollment and binding are administrator-owned and read-only to the service; only the `runtime` child directory (status, locks, reports and failure log) is service-writable. Binaries default to `%ProgramFiles%\Factory\Workbench\releases\<releaseId>`; `-InstallDirectory` overrides the binary root on **Install only**, and later maintenance uses the saved location. These locations replace the prototype's per-user layout; existing per-user configuration is not silently migrated. Configuration writes are atomic and retain the same installation ID. Once enrollment begins, setup cannot replace the origin or authentication profile.
+
+Install registers `Factory.Workbench.<installation-id>` with a matching dedicated virtual service account, protected state-directory/key access, automatic boot startup, and three delayed crash restarts before stopping further retries. The account is **not a validated WSL account choice**. CLI install does not start the host: `Run` records persistent run intent and starts the service. `Stop` clears that intent, so reboot does not undo an intentional stop. An enrolled service reconnects and reports presence without human sign-in; an unenrolled service explicitly reports incomplete enrollment. Neither starts WSL or claims work.
+
+`Update` uses the new package's setup script with `-Action Update -AllowUnsignedPackage`. It stages a new immutable release, stops the service, obtains exclusive runtime ownership, records pending activation, switches the service executable, and restores prior run intent. Failed activation attempts restore the previous selection; `Rollback` explicitly selects the previous retained release. Neither action replaces configuration or journals. The current runtime has no assignments to drain; workload drain/cancellation semantics must be added with execution.
+
+`Recover` repairs interrupted installation/service registration or conservatively restores the last committed release after interrupted activation, then honors saved run intent. Interrupted uninstall is completed instead of restarting the runtime. Incomplete maintenance blocks runtime startup until recovered; this is not yet a privileged automatic maintenance-recovery agent. Runtime crash restart and maintenance recovery are separate paths. Recovery never re-enrolls, deletes journals, or replays work.
+
+`Uninstall` stops and removes the installation-owned service and its recorded release directories. It retains configuration, installation identity, state, logs, the binary ownership marker, and unrelated files. Reinstall can reuse that identity. Remote retirement, credential destruction, state purge, WSL distribution removal, and shared prerequisite removal are not implemented.
+
+`Inspect` is read-only and validates configuration and selected-release digests. It explicitly reports deferred WSL/authentication/execution readiness; exit `1` means failure, and `2` means incomplete readiness. `Status` reports persisted installation state and actual SCM running state; persisted runtime observations are not proof that a process is alive. The selected installed host supports `run --root <state-directory>` for foreground diagnostics after stopping the service; exclusive ownership prevents a second host.
+
+Copied host files are checked against SHA-256 digests, but development packages and MSI are unsigned. CLI install/update require explicit unsigned-package consent. Do not run packages from untrusted sources or treat them as production-ready. The website remains read-only for workbench registration.
 
 ## Build and checks
 
 ```powershell
 dotnet test .\src\Factory\Factory.slnx
 pwsh -NoProfile -File .\src\Factory\bootstrap\tests\Bootstrap.Tests.ps1
+pwsh -NoProfile -File .\src\Factory\bootstrap\tests\EnrollmentBootstrap.Tests.ps1
 ```
 
 The bootstrap checks mock Azure CLI, dotnet and secret prompts; they do not provision resources or read real user-secrets.

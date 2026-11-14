@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Factory.Contracts\Factory.Contracts.csproj" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.90.1" />
+  </ItemGroup>
+</Project>

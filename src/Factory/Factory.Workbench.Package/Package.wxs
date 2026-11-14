@@ -1,0 +1,59 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Factory Workbench (Development)" Manufacturer="Factory" Version="$(var.ProductVersion)"
+           UpgradeCode="E309B183-F658-4D0B-A550-BDFD71404EA3" Scope="perMachine" InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer Factory Workbench installer is already installed."
+                  Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="ExistingInstallFolder" Root="HKLM" Key="Software\Factory\WorkbenchInstaller"
+                      Name="InstallFolder" Type="raw" Bitness="always64" />
+    </Property>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="FactoryFolder" Name="Factory">
+        <Directory Id="INSTALLFOLDER" Name="Workbench Setup" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="FactoryStartMenu" Name="Factory Workbench">
+        <Component Id="SetupShortcut" Guid="*">
+          <Shortcut Id="SetupStartMenu" Name="Factory Workbench Setup" Target="[#WorkbenchSetup]"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveStartMenu" On="uninstall" />
+          <RegistryValue Root="HKLM" Key="Software\Factory\WorkbenchInstaller" Name="InstallFolder"
+                         Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Workbench" Title="Factory Workbench" Level="1">
+      <ComponentGroupRef Id="PublishedPayload" />
+      <ComponentRef Id="SetupShortcut" />
+    </Feature>
+    <Binary Id="LifecycleHelper" SourceFile="$(var.HelperPath)" />
+    <CustomAction Id="RollbackRuntime" BinaryRef="LifecycleHelper" Execute="rollback" Impersonate="no"
+                  ExeCommand="msi-rollback --transaction &quot;[ProductCode]&quot;" Return="check" />
+    <CustomAction Id="ApplyRuntime" BinaryRef="LifecycleHelper" Execute="deferred" Impersonate="no"
+                  ExeCommand="msi-apply --transaction &quot;[ProductCode]&quot; --package &quot;[INSTALLFOLDER]payload&quot;" Return="check" />
+    <CustomAction Id="PrepareRuntimeRemoval" BinaryRef="LifecycleHelper" Execute="deferred" Impersonate="no"
+                  ExeCommand="msi-prepare-uninstall --transaction &quot;[ProductCode]&quot;" Return="check" />
+    <CustomAction Id="CommitRuntime" BinaryRef="LifecycleHelper" Execute="commit" Impersonate="no"
+                  ExeCommand="msi-commit --transaction &quot;[ProductCode]&quot;" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="RollbackRuntime" After="InstallInitialize" Condition="NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="PrepareRuntimeRemoval" Before="RemoveFiles"
+              Condition="REMOVE ~= &quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="ApplyRuntime" After="InstallFiles"
+              Condition="NOT REMOVE ~= &quot;ALL&quot;" />
+      <Custom Action="CommitRuntime" Before="InstallFinalize" Condition="NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="DevelopmentNotice.rtf" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open sign-in and workbench setup" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#WorkbenchSetup]" />
+    <CustomAction Id="LaunchSetup" BinaryRef="Wix4UtilCA_X64" DllEntry="WixShellExec" Impersonate="yes" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchSetup" Order="1"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT REMOVE ~= &quot;ALL&quot;" />
+    </UI>
+  </Package>
+</Wix>

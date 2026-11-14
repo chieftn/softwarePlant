@@ -53,6 +53,68 @@ Production methods specify how decomposition, worker coordination, integration, 
 
 PR readiness is distinct from human authorization to release the product to consumers.
 
+## Development and Improvement Rings
+
+This is a working architecture model, captured to preserve the current reasoning and revised as we learn from actual production work. It describes five feedback rings, not five sequential stages or an implemented execution engine.
+
+| Ring | Question | Work and outcome |
+|---|---|---|
+| **1. Implementation (inner loop)** | Does the implementation do the intended thing? | Write code, run focused tests, debug, and revise. Produces a working change and evidence of its behavior. |
+| **2. Alignment** | Does the change conform to the product specification and engineering constraints? | Use tools and specialist agents to assess functional and non-functional requirements, architecture, contracts, security, performance, and maintainability. Produces findings and verification evidence. |
+| **3. Commitment** | Are we prepared to accept and integrate the change? | Review code, challenge and resolve feedback, coordinate contribution or stacked PRs, and integrate accepted changes. Produces an accepted change and recorded disposition of review findings. |
+| **4. Operations** | Is the production line functioning as intended? | Observe work queues, stalled assignments, agent/tool failures, capacity, throughput, rework, and cost. Recover or escalate under existing authority. This concerns the production line, not merely the deployed product. |
+| **5. Kaizen (continuous process improvement)** | How should we improve the means of production? | Investigate recurring problems, trial changes, and evaluate outcomes. Improves agent definitions, instructions, skills, role assignments, workflows, verification, tooling, and plant capabilities under their respective ownership. |
+
+### Relationships Between Rings
+
+The rings can overlap and feed back into one another. Commitment review can return work to implementation or alignment. Operations runs while changes are being developed. Any ring can surface an opportunity for kaizen.
+
+Tools, agents, and people can participate in any ring. The distinction is the question being answered and the outcome required, not which kind of actor performs the work. A ring does not require a dedicated agent, process, or service.
+
+Alignment establishes conformance; commitment settles acceptance. Review feedback may be accepted, challenged, resolved, or escalated rather than treated as an unquestionable instruction. Evidence must apply to the revision being accepted; subsequent changes or restacking can invalidate earlier evidence. PR acceptance and integration remain distinct from human authorization to release a product.
+
+### Operations and Kaizen Are Separate Rings
+
+Operations sustains the current production process and responds to deviations. Kaizen deliberately changes that process. Restoring a failed tool is operational work; changing the tool, instructions, or workflow to prevent recurring failures is improvement work.
+
+The kaizen cycle is:
+
+**Observation → hypothesis → bounded trial → evaluation → adoption, revision, or reversal**
+
+An improvement connects evidence of a problem to a proposed change, its expected benefit, evaluation criteria, and the decision made from the results. Evaluation considers effects on the whole workflow, not just a local speed increase.
+
+Kaizen can use implementation, alignment, and commitment to deliver changes to the production machinery, but it remains a separate ring with its own objective. Production outcomes and improvement evidence should retain the applicable line revision so changes in results can be investigated. Changes to plant infrastructure remain subject to plant ownership; improvement work does not grant itself broader authority.
+
+### Jidoka Across Every Ring
+
+**Jidoka is a cross-cutting principle, not another ring or a responsibility owned only by alignment.** Build quality into the work by recognizing abnormalities, preventing defective or unverified work from silently progressing, and making intervention possible.
+
+The common pattern is:
+
+**Detect → contain → signal → resolve → verify before proceeding**
+
+Each ring needs to identify abnormal conditions, how they are detected, what progression they block, who can resolve or receive an escalation, and what evidence permits work to resume. For example, failed tests prevent a readiness claim, missing verification prevents a conformance claim, unresolved blocking findings prevent integration, execution failures must not be reported as success, and unsuccessful improvement trials must not become the new standard.
+
+Stopping means containing the affected progression, not necessarily stopping the whole factory. An expected test failure during implementation is ordinary feedback; passing that failure downstream as completed work is the problem.
+
+### Flow and Industrial Influences
+
+The Toyota Production System's two pillars are **jidoka** and **Just-in-Time**. Jidoka protects quality; Just-in-Time coordinates flow by producing what is needed, when needed, in the amount needed. These are principles applied across the rings, not two additional stages.
+
+For this factory, more active agents or more generated code do not necessarily mean more useful output. Work that accumulates ahead of review and integration increases unfinished inventory and can create waiting, conflicts, and rework. Consider demand and downstream capacity rather than optimizing each ring in isolation.
+
+Other useful Japanese concepts include **monozukuri** (making things with skill and care), **nemawashi** (consultation and groundwork before a formal decision), and **nichijo kanri** (daily management that sustains standards). **Andon** makes problems visible and requests intervention; **genchi genbutsu** emphasizes establishing facts at the source; **hansei** is deliberate reflection. These inform practices within the rings rather than supply exact alternative names for them.
+
+The five-ring model is our working model, not an established Toyota classification. Software development involves discovery and changing requirements, so manufacturing practices must be adapted rather than copied mechanically. Ring configuration, scheduling, and runtime enforcement remain to be defined.
+
+Study references:
+
+- [Toyota Production System: the two pillars](https://global.toyota/en/company/vision-and-philosophy/production-system/)
+- [Toyota glossary: jidoka, kaizen, nemawashi, and related concepts](https://mag.toyota.co.uk/toyota-production-system-glossary/)
+- [Toyota on monozukuri](https://global.toyota/en/newsroom/corporate/39758220.html)
+- [Daily management and nichijo kanri](https://artoflean.com/reference/daily-management/)
+- [Lean Product and Process Development](https://www.lean.org/explore-lean/product-process-development/)
+
 ## Definition Versus Execution
 
 The production line's definition is distinct from the infrastructure executing it. Guidance, skills, worker definitions, role assignments, and workflows belong to the line; the plant supplies execution resources.

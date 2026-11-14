@@ -35,6 +35,12 @@ public partial class Program
         var websiteEnabled = builder.Services.AddFactoryWebsite(builder.Configuration, builder.Environment, protection);
         builder.Services.AddSingleton<Pagination>();
         builder.Services.AddScoped<PlantOperations>();
+        builder.Services.AddOptions<EnrollmentSettings>().BindConfiguration("Factory:Enrollment");
+        builder.Services.AddSingleton(services => services.GetRequiredService<IOptions<EnrollmentSettings>>().Value);
+        builder.Services.AddScoped<EnrollmentOperations>();
+        builder.Services.AddScoped<EnrollmentProcessor>();
+        builder.Services.AddSingleton<IDirectoryProvisioner, GraphDirectoryProvisioner>();
+        builder.Services.AddHostedService<EnrollmentWorker>();
         builder.Services.AddSingleton<TokenCredential>(serviceProvider =>
         {
             var settings = serviceProvider.GetRequiredService<ApiSettings>();
@@ -87,7 +93,10 @@ public partial class Program
 
         var app = builder.Build();
         var apiSettings = app.Services.GetRequiredService<ApiSettings>();
+        app.Services.GetRequiredService<EnrollmentSettings>().Validate(app.Environment);
         var configurationErrors = apiSettings.Validate(app.Environment);
+        if (app.Services.GetRequiredService<EnrollmentSettings>().Enabled && configurationErrors.Count != 0)
+            throw new InvalidOperationException("Enrollment requires complete plant API configuration: " + string.Join(", ", configurationErrors));
         var websiteSettings = app.Services.GetRequiredService<IOptions<WebsiteSettings>>().Value;
         if (websiteEnabled)
         {

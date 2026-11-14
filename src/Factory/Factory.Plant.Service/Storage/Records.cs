@@ -13,6 +13,8 @@ namespace Factory.Plant.Service.Storage;
 [JsonDerivedType(typeof(PresenceRecord), "presence")]
 [JsonDerivedType(typeof(OperationRecord), "operation")]
 [JsonDerivedType(typeof(AuditRecord), "audit")]
+[JsonDerivedType(typeof(EnrollmentRecord), "enrollment")]
+[JsonDerivedType(typeof(EnrollmentReservationRecord), "enrollmentReservation")]
 public abstract record StoreRecord
 {
     public required string Id { get; init; }
@@ -41,12 +43,38 @@ public sealed record AccessRecord : StoreRecord
 
 public sealed record WorkbenchRecord : StoreRecord
 {
+    public string? EnrollmentId { get; init; }
     public required string Name { get; init; }
     public required EntraApplicationPrincipal Identity { get; init; }
     public required string AdmissionState { get; init; }
     public required DateTimeOffset CreatedAt { get; init; }
 }
 
+public sealed record EnrollmentRecord : StoreRecord
+{
+    public required EnrollmentDraft Draft { get; init; }
+    public required EntraPrincipal Requester { get; init; }
+    public required string RequesterClientId { get; init; }
+    public required string Digest { get; init; }
+    public required string WorkbenchId { get; init; }
+    public required string State { get; init; }
+    public required DateTimeOffset UpdatedAt { get; init; }
+    public required DateTimeOffset AuthorizedAt { get; init; }
+    public string? ApplicationObjectId { get; init; }
+    public string? ClientId { get; init; }
+    public string? ServicePrincipalId { get; init; }
+    public DateTimeOffset? ApplicationCreateStartedAt { get; init; }
+    public DateTimeOffset? PrincipalCreateStartedAt { get; init; }
+    public string? LeaseOwner { get; init; }
+    public DateTimeOffset? LeaseUntil { get; init; }
+    public DateTimeOffset? RetryAt { get; init; }
+    public string? Error { get; init; }
+    public int Failures { get; init; }
+}
+public sealed record EnrollmentReservationRecord : StoreRecord
+{
+    public required string EnrollmentId { get; init; }
+}
 public sealed record RegistrationRecord : StoreRecord
 {
     public required WorkbenchRegistration Registration { get; init; }
@@ -77,7 +105,7 @@ public sealed record AuditRecord : StoreRecord
 public sealed record StoredRecord(StoreRecord Record, string ETag);
 public sealed record RecordWrite(StoreRecord Record, string? ExpectedETag = null);
 public sealed record RecordQuery(string Type, int Limit, string? PlantId = null, string? ScopeId = null,
-    EntraPrincipal? Principal = null, string? AfterId = null);
+    EntraPrincipal? Principal = null, string? AfterId = null, string[]? States = null);
 
 public interface IRecordStore
 {
@@ -97,6 +125,7 @@ public static class Records
 
     public static string PlantScope(string plantId) => $"plant:{plantId}:settings";
     public static string WorkbenchScope(string plantId, string workbenchId) => $"plant:{plantId}:workbench:{workbenchId}";
+    public static string EnrollmentScope(string plantId, string operationId) => $"plant:{plantId}:enrollment:{operationId}";
 
     public static T Require<T>(StoreRecord record) where T : StoreRecord =>
         record is T value && record.SchemaVersion == "1" ? value
