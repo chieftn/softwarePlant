@@ -46,6 +46,17 @@ public static partial class PlantEndpoints
             var view = await operations.RevokeAsync(id, ApiCaller.Read(context.User), cancellationToken, draft);
             return Results.Json(view, Json, statusCode: view.State == "retired" ? 200 : 202);
         }).RequireAuthorization("enrollment-admin");
+        inventory.MapPost("/{operationId}/retire-self", async (string operationId, HttpContext context,
+            EnrollmentOperations operations, CancellationToken cancellationToken) =>
+        {
+            NoQuery(context);
+            var id = PlantId(operationId);
+            if (OperationKey(context) != id || context.Request.ContentLength is > 0 ||
+                context.Request.Headers.ContainsKey("Transfer-Encoding"))
+                throw ApiProblems.Invalid("Device retirement requires an empty body and its enrollment Idempotency-Key.");
+            var view = await operations.RetireSelfAsync(id, ApiCaller.Read(context.User), cancellationToken);
+            return Results.Json(view, Json, statusCode: view.State == "retired" ? 200 : 202);
+        }).RequireAuthorization("workbench");
         inventory.MapPut("/{operationId}/assignment", async (string operationId, HttpContext context,
             EnrollmentOperations operations, CancellationToken cancellationToken) =>
         {

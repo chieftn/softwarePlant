@@ -4,11 +4,13 @@ Status: Draft proposal. Resource choices and API behavior below are proposed req
 
 Companion: [RFC 001: Workbench Workloads and Installation](001-workbench-workloads-and-installation.md), which specifies machine credentials and enrollment.
 
+Lifecycle alignment: enroll devices into service-wide inventory, initially unassigned; manage one-plant membership through the website. RFC 001 now requires guided installation through enrollment, identity-preserving upgrades and complete owned-local uninstall with best-effort remote retirement. The revised installer/uninstall contract is not implemented by MSI `0.1.3`; see the [architecture](../docs/architecture.md) for current deployed scope.
+
 Project structure: [RFC 003: Factory Solution and Projects](003-factory-solution-and-projects.md).
 
 ## Purpose
 
-The Factory plant service hosts multiple plant instances and provides a web application and machine-facing HTTPS API for plant bookkeeping: ownership and access assignments, enrolled workbenches, line bindings, assignment queues, execution claims, presence, and results. Store these as independently updateable documents, not one whole-plant document.
+The Factory plant service hosts service-wide device enrollment inventory and multiple plant instances. It provides a web application and machine-facing HTTPS API for enrollment/retirement and plant bookkeeping: ownership and access assignments, workbench membership, line bindings, assignment queues, execution claims, presence, and results. Store these as independently updateable documents, not one whole-plant document.
 
 A production-line coordinator may use MAF to decide what work to submit. The plant service validates and records that work without invoking a model. Workbenches and the plant view use the same service rules.
 
@@ -24,7 +26,7 @@ No client receives direct database credentials. Registration, polling, and heart
 
 ## Responsibilities and Limits
 
-The plant owns device admission, identity bindings, capabilities, capacity, durable delivery, ownership, execution records, and audit evidence. A line owns its repositories, worker roles, workloads, methods, and verification requirements.
+Factory owns enrollment, device identity and retirement independently of plant membership. A plant owns resource membership/admission, capabilities, capacity, durable delivery, ownership, execution records, and audit evidence. A line owns its repositories, worker roles, workloads, methods, and verification requirements.
 
 Store versioned line definitions and approved bindings as configuration. The service resolves them into assignment snapshots, but does not invent the workflow or make model-driven routing decisions.
 
@@ -38,11 +40,13 @@ Each plant has an ID, name, owning Entra tenant/user object ID, lifecycle state,
 
 ```text
 Plant service
+    Enrollment inventory: device identities, lifecycle and Factory presence
+        Unassigned devices, or versioned membership in one plant
     Plant A: owner, scoped role assignments
-        Workbenches
+        Assigned workbenches
         Other resource types as supported
     Plant B: owner, scoped role assignments
-        Workbenches
+        Assigned workbenches
         Other resource types as supported
 ```
 
@@ -53,11 +57,11 @@ Service-level `Factory.PlantCreator` authority permits creation. Create the plan
 | Plant role | Authority |
 |---|---|
 | Owner | Manage the plant, its scoped access assignments, resource admission, and owner transfer. |
-| `Workbench.Registrar` | Authorize client-initiated workbench registration and recover/revoke identities in this plant; cannot assign roles or administer Entra directly. |
+| `Workbench.Registrar` | At plant scope, authorize membership changes for already-enrolled devices when combined with Factory enrollment administration. Cannot assign roles or administer Entra directly. |
 | `Plant.Operator` | Operate approved resources and reconcile execution within scope; line/workload grants remain separate. |
 | `Plant.Reader` | Read authorized plant/resource state without mutation. |
 
-Plant-scoped permissions apply to its child resources where the role permits the action. Resource-scoped assignments can grant narrower access without authority over sibling resources or the plant. Registration of a new workbench requires authority on its parent plant. Adding a resource type does not silently extend the workbench registrar's permissions.
+Plant-scoped permissions apply to its child resources where the role permits the action. Resource-scoped assignments can grant narrower access without authority over sibling resources or the plant. Assigning, moving or unassigning a workbench requires enrollment administration plus ownership/plant-scoped registrar authority over the source and destination plants, where present. Enrollment itself requires no parent plant. Adding a resource type does not silently extend the workbench registrar's permissions.
 
 Plant ownership is application authority, not Azure subscription ownership or an Entra administrator role. Owning Plant A gives no access to Plant B. Production lines bind to resources through explicit grants; they are not owned by this resource hierarchy, and plant access does not bypass local execution limits.
 
@@ -98,7 +102,7 @@ The data-access identity has no Graph write permissions. A separate, explicitly 
 
 Use server-rendered HTML with a pinned, self-hosted Datastar library for reactive signals and HTML updates. Do not require a SPA framework, a browser-side copy of the domain model, or a full client-side router. Select the server template renderer during implementation; it must support safe HTML/attribute escaping and reusable fragments.
 
-The first page lists plants the signed-in user can access, not all plants. A plant page shows its owner, effective role assignments, resources, and execution state. Workbench registration is read-only on the website: show inventory, capabilities, and status, without create or approval controls. Enrollment starts in setup on the workbench. Owner/role management uses the same application operations as the API.
+The first page lists plants the signed-in user can access, not all plants. A plant page shows its owner, effective role assignments, resources, and execution state. A separate enrollment-administrator page lists service-wide devices and supports assign/move/unassign and retirement. Enrollment starts in guided installation on the workbench; the website does not fabricate device identities or approve a second request. Observed registration/capabilities remain machine reports, not editable identity grants. Owner/role management uses the same application operations as the API.
 
 Use signals for local interaction state such as filters, selections, and pending actions. The server authorizes every action, commits the operation, and returns HTML and/or signal patches. A browser patch is not evidence that a background operation completed.
 
@@ -119,11 +123,12 @@ Do not trust caller-supplied identity headers. Derive identity from the validate
 | Caller | Authentication / service-entry permission | Additional service restriction |
 |---|---|---|
 | Web user | Entra sign-in and `Factory.User` service-entry role | Owner or scoped database role determines plant/resource actions. |
-| Installer user | Delegated `Plant.Access` scope and `Factory.User` role | Current owner or plant-scoped registrar authorizes enrollment in local setup; no separate approval path. |
+| Installer user | Delegated `Plant.Access`, `Factory.User` and `Factory.EnrollmentAdministrator` | Authorize service-wide enrollment during guided installation; no plant selection or separate approver. |
+| Enrollment administrator | Human service entry plus `Factory.EnrollmentAdministrator` | Read inventory and retire enrollments. Membership changes additionally require source/destination plant authority. |
 | Plant creator | Human authentication plus `Factory.PlantCreator` role | May create a plant and become its initial owner; no access to unrelated plants. |
 | Line operator | Human authentication plus explicit line grant | Submit/read/cancel work only within authorized lines and plant resource bindings. |
 | MAF line coordinator | Application `Line.Coordinator` role | Bind its tenant/object ID to specific lines and allowed workbenches. |
-| Workbench | Application `Workbench.Connect` role | Require an active tenant/object-ID binding; access only its own assignments and bounded execution evidence. |
+| Workbench | Application `Workbench.Connect` role | Require the exact enrolled identity and permitted lifecycle state. Factory connection/presence works while unassigned; plant operations require current membership. Access only its own assignments and bounded evidence. |
 
 Entra service-entry roles and application roles have their corresponding allowed member types. The application service principal requires assignment. Service entry is not plant authority: ownership and scoped roles are stored and evaluated by this application, not encoded as a tenant-wide `Plant.Owner` role.
 
@@ -135,15 +140,25 @@ Evaluate current admission and scoped grants on each mutation; do not rely solel
 
 ## Background Enrollment and Credential Provisioning
 
-Enrollment follows RFC 001. Return `202 Accepted` only after committing the draft, the enrolling owner/registrar's authorization and audit event, and durable operation state. The authorized user's explicit submission authorizes enrollment; there is no request-only role, separate approver, or website approval step. Record the human actor independently from the resulting daemon identity.
+Enrollment follows RFC 001. Return `202 Accepted` only after committing the draft, the enrollment administrator's authorization and audit event, and durable operation state. The authorized user's explicit submission authorizes enrollment; there is no request-only role, separate approver, or website approval step. Record the human actor independently from the resulting daemon identity. The resulting device starts unassigned and can report Factory presence without belonging to a plant.
 
-Persist enrollment states `authorized`, `provisioning`, `ready`, `active`, `failed`, and `needsAttention`, with actor/time, retry metadata, and completed directory steps. Machine admission separately records `pending`, `active`, or `revoked`. The operation must survive application restart and the user's logout; never implement it as a request-scoped or fire-and-forget task.
+Persist enrollment states `authorized`, `provisioning`, `ready`, `active`, `failed`, `needsAttention`, `revoking`, `retirementNeedsAttention` and `retired`, with actor/time, retry metadata and completed directory steps. Versioned membership and plant admission are separate from enrollment state. The operation must survive application restart and the user's logout; never implement it as a request-scoped or fire-and-forget task.
 
-Use a hosted background worker with Cosmos-backed reservations and conditional progress updates. Bound directory steps to less than the reservation lifetime. Recheck the plant's state and the enrolling principal's current authority before provisioning/first activation. Identify directory objects by stored IDs and enrollment markers, verify provisioner ownership, and reserve the installation's workbench address before creating an identity. Reconcile uncertain Graph responses before another mutation; an unresolved create moves to `needsAttention` rather than risking a duplicate identity.
+Use a hosted background worker with Cosmos-backed reservations and conditional progress updates. Bound directory steps to less than the reservation lifetime. Enrollment authorization is independent of plant membership and the operator's subsequent plant access. Identify directory objects by stored IDs and enrollment markers, verify provisioner ownership, and reserve the installation identity before creating a directory identity. Reconcile uncertain Graph responses before another mutation; an unresolved create moves to `needsAttention` rather than risking a duplicate identity.
 
-Create the application/service principal, attach only the public certificate, grant the configured API role, and store the plant/workbench identity binding. Activate only after the actual daemon token matches that binding. Once active, routine startup does not depend on the enrolling user's session or continued plant authority; current machine admission still applies. Directory writes and Cosmos transitions are not one transaction. Lost registration authority before activation, missing tenant consent, propagation delay, and partial provisioning must remain visible and non-executable; reconcile any directory side effects before cleanup.
+Create the application/service principal, attach only the public certificate, grant the configured API role, and store the enrollment/workbench identity binding without a plant. Activate only after the actual daemon token matches that binding. Once active, routine startup does not depend on the enrolling user's session; current enrollment and membership still apply. The website changes membership using an expected version; runtime discovers it and plant reports must match that version and enrollment generation. Directory writes and Cosmos transitions are not one transaction. Missing consent, propagation delay and partial provisioning must remain visible and non-executable.
 
-Credential rotation and revocation must preserve the tracked identity and use the same explicit provisioning boundary; these operations remain unimplemented in the current connection-only slice. A signed-in user need not be a directory administrator, and no operator script is required for normal enrollment after the one-time administrator bootstrap. Provisioning endpoints never accept arbitrary Graph requests, application targets, or permission grants.
+Credential rotation preserves the tracked identity and uses the same explicit provisioning boundary; automatic rotation remains unimplemented. Retirement revokes the authoritative enrollment first and then reconciles/deletes only its recorded, owned directory identity, retaining audit history. Preserve in-flight provisioning leases and uncertain-create checkpoints rather than falsely reporting retirement complete. A signed-in enrollment administrator need not be a directory administrator, and normal enrollment needs no operator script after bootstrap. Provisioning endpoints never accept arbitrary Graph requests, application targets, or permission grants.
+
+Disabling new enrollments must not disable existing device connections or retirement. Retain the provisioner configuration for directory cleanup; missing configuration must be visible rather than reported as completed retirement.
+
+### Retirement During Uninstall
+
+The revised RFC 001 uninstall makes a bounded retirement attempt before destroying local credentials, but does not wait indefinitely or require remote success for full local removal. Acknowledgment must distinguish durable acceptance/revoked access from completed directory retirement. Once accepted, retirement must finish from server-owned state even if the device, private key and local journals are gone.
+
+An unreceived request is not a queued server job. Failed authorization, offline operation and lost responses must not be presented as confirmed revocation. Keep administrative retirement available through the service-wide inventory without requiring device access or reinstall. Preserve retirement/audit history, and do not create another identity merely because the client has stopped reporting.
+
+The `0.1.4` authorization decision adds `POST /v1/enrollments/{id}/retire-self`: an application token with existing `Workbench.Connect`, bound to the exact enrolled tenant/client/service principal, can retire only that identity. Require an empty body and enrollment-ID idempotency key, accepting ready/active state and retirement retries. The administrator endpoint remains separate. No new Graph grant, machine enrollment-administrator role or embedded administrator credential is needed. A partial enrollment without a usable machine binding requires administrative follow-up, not weaker proof or blocked local cleanup. Service deployment remains separate from the package build.
 
 ## Document Layout
 
@@ -152,13 +167,14 @@ Use a common envelope: `id`, `scopeId`, `type`, `schemaVersion`, plant/line iden
 | Partition scope | Documents |
 |---|---|
 | `plant:<id>:settings` | Plant identity, owner binding, lifecycle/policy, plant/resource-scoped access assignments, and audit records. Not a whole-plant resource directory. |
-| `plant:<id>:workbench:<id>` | Admission/identity record, credential operations, separate presence record, execution slot, assignments, claim receipts, results, and mutation audit records. |
+| `plant:<id>:workbench:<id>` | Membership/admission projection, registration/capabilities, plant presence, execution slot, assignments, claim receipts, results, and mutation audit records. |
 | `plant:<id>:line:<id>` | Immutable line revisions, repository/integration settings, coordinator/user grants, and line-to-workbench bindings. |
-| `plant:<id>:enrollment:<id>` | Enrollment draft/public certificate, authorizing human, provisioning progress, background reservation/checkpoints, and audit records. |
+| `enrollment:<id>` | Service-wide enrollment draft/public certificate, authorizing human, identity/credential/provisioning/retirement checkpoints, membership/version, Factory presence, receipts and audit. |
+| `installation:<id>` | Enrollment reservation preventing concurrent identities for one installation. Retired identity is not reactivated by a fresh enrollment. |
 
-The same container can hold these document types; separation does not imply a service or container per type. Presence updates touch only presence, not the execution slot or a global registry.
+The same container can hold these document types; separation does not imply a service or container per type. Presence updates do not release execution slots. Factory presence can fence against concurrent retirement through the enrollment record; it is not a whole-service registry document.
 
-Every resource, enrollment operation, artifact, and query is scoped to its plant. Enforce scope before returning data, including paginated lists and HTML patches. Workbench and assignment identifiers alone cannot cross plant boundaries. Keep plant ownership/access mutations in their settings partition; directory-job progress is transactional with its enrollment record, not with Microsoft Graph.
+Plant resources, work assignments and artifacts are scoped to their plant. Enrollment inventory/lifecycle is service-wide and requires its dedicated administrator authority; machine connection/presence is bound to the exact device identity. Enforce the applicable scope before returning any page or HTML patch. Workbench and assignment identifiers alone cannot cross plant boundaries. Keep plant ownership/access mutations in their settings partition; directory-job progress is transactional with its enrollment record, not with Microsoft Graph. Membership projections in plant partitions require reconciliation; transactions remain partition-scoped.
 
 Each assignment contains its line/revision, target workbench, snapshot reference/digest, submission sequence fields, state, claim reference, heartbeat, publication requirement, and eventual result reference. Keep documents below an application limit of 128 KiB. Store instructions and large evidence in Blob Storage rather than growing the queue document.
 
@@ -172,12 +188,12 @@ Cosmos transactions apply within one logical partition. Put a workbench's execut
 
 For a claim:
 
-1. Authenticate the workbench and validate current line grants and capabilities.
+1. Authenticate the exact workbench identity and validate current enrollment, plant membership/version, line grants and capabilities.
 2. Read its admission record, execution slot, and eligible queue entry. Return the prior receipt if this claim ID was already accepted.
 3. Submit one transactional batch: conditionally update the admission record using its ETag, conditionally reserve the empty slot, conditionally change the selected assignment from queued to running, create the claim receipt, and append the audit event.
 4. On an ETag race, reread and retry within a bounded budget. No model call, Git operation, or other external effect occurs inside this retry.
 
-The admission update acts as a concurrency guard against device revocation. Scoped line-grant changes in other partitions are checked before the transaction but are not part of it; an already-authorized in-flight claim may complete. Do not promise cross-partition atomic revocation.
+The admission update guards plant-local admission changes. Authoritative enrollment retirement, membership changes and scoped line grants in other partitions are checked before the transaction but are not part of it; an already-authorized in-flight claim may complete. Subsequent requests must validate current enrollment/membership again. Do not promise cross-partition atomic revocation.
 
 Completion conditionally checks the matching slot and claim, creates the immutable result metadata, marks the assignment terminal, clears the slot, and appends the audit event in one batch. Identical completion retries return the recorded result; conflicting payloads are rejected.
 
@@ -191,17 +207,20 @@ Start idle checks at five seconds with jitter, backing off to 30 seconds when em
 
 ## API Surface
 
-Use `/v1/plants/{plantId}` as the authenticated base `P` below. Define JSON schemas and publish OpenAPI. Reject unknown schema versions and invalid fields rather than guessing defaults.
+Use `/v1/plants/{plantId}` as the authenticated plant base `P` and `/v1/enrollments` as the service-wide enrollment base `E` below. Define JSON schemas and publish OpenAPI. Reject unknown schema versions and invalid fields rather than guessing defaults.
 
 | Operation | Endpoint and behavior |
 |---|---|
 | Discovery | `GET /.well-known/plant-config`: public API/protocol versions and expected public authentication metadata. No registry or secrets. |
 | Plants | `GET /v1/plants`: paginated accessible plants. `POST /v1/plants`: creator-authorized, idempotent creation and initial owner binding. |
 | Plant access | `GET P`, scoped role-assignment operations, and owner transfer: enforce owner/manage-access authority and prevent owner removal without replacement. |
-| Enrollment | `POST P/enrollments`, `GET P/enrollments/{operationId}`: owner/registrar-authorized signed submission and resumable status. |
-| Enrollment proof | `POST P/enrollments/challenge`: bind a short-lived possession challenge to the plant, human and immutable machine draft. |
-| Activation | `POST P/enrollments/{operationId}/activate`: verify the exact provisioned application-token binding before first activation. |
-| Credentials | Claim-independent, workbench-bound rotation operations with old/new key proof; owner/registrar-authorized recovery and revocation. Return durable operation status, not immediate directory success. |
+| Enrollment | `GET E`, `POST E`, `GET E/{operationId}`: enrollment-administrator inventory, signed submission and resumable status. |
+| Enrollment proof | `POST E/challenge`: bind a short-lived possession challenge to the human and immutable machine draft, not a plant. |
+| Activation | `POST E/{operationId}/activate`: verify the exact provisioned application-token binding before first activation. |
+| Membership | `PUT E/{operationId}/assignment`: expected-version assign/move/unassign with enrollment administration plus source/destination plant authority. |
+| Device connection | `GET E/{operationId}/connection`, `PUT E/{operationId}/presence`: exact-machine membership discovery and Factory presence, including while unassigned. |
+| Retirement | `POST E/{operationId}/revoke`: administrator-authorized durable revocation/retirement, including cancellation with the original unsubmitted draft. `POST E/{operationId}/retire-self`: exact device identity retires only itself, using existing `Workbench.Connect`. |
+| Credentials | Claim-independent, workbench-bound rotation operations with old/new key proof and enrollment-administrator recovery. Return durable operation status, not immediate directory success. |
 | Registration | `PUT P/workbenches/{id}/registration`: update observed machine metadata, installed versions, and capabilities; cannot change identity, admission, or local limits remotely. |
 | Presence | `PUT P/workbenches/{id}/presence`: bounded current status, separate from queue ownership. |
 | Configuration | `GET P/lines/{id}/revisions/{revision}` and operator-only publication/binding operations: immutable definitions and explicit grants. Workbenches receive only their authorized execution configuration. |
@@ -210,11 +229,11 @@ Use `/v1/plants/{plantId}` as the authenticated base `P` below. Define JSON sche
 | Heartbeat | `PUT P/workbenches/{id}/claims/{claimId}/heartbeat`: check ownership and return any cancellation request. |
 | Result | `PUT P/workbenches/{id}/assignments/{assignmentId}/result`: idempotent, claim-bound completion. |
 | Evidence | Claim-bound artifact upload/read and `POST P/workbenches/{id}/events`: bounded evidence and telemetry batches. |
-| Web application | Cookie-authenticated HTML pages/actions and Datastar status streams under `/plants`; reuse application operations, not the bearer-only API routes. |
-| Operator view | Paginated workbench, enrollment, line, assignment, result, and audit queries, filtered by plant/resource/line authority. |
+| Web application | Cookie-authenticated HTML pages/actions under `/plants` and `/enrollments`, with Datastar streams as needed; reuse application operations, not bearer-only API routes. |
+| Operator view | Paginated plant/resource/line queries under scoped authority; service-wide enrollment inventory under dedicated enrollment-administrator authority. |
 | Control | Assignment cancellation request, explicit operator resolution, and workbench revocation. Each records actor, reason, operation ID, and resulting state. |
 
-Use a stable operation ID and payload digest for repeatable mutations. Enrollment and provisioning also use ETags for state transitions. Reuse with a different payload is a conflict, not a new operation.
+Use a stable operation ID and payload digest for repeatable mutations. Membership changes use an expected version rather than an idempotency key. Enrollment and provisioning also use ETags for state transitions. Reuse with a different payload is a conflict, not a new operation.
 
 Return Problem Details with a machine-readable error code, safe explanation, correlation ID, and retry guidance. Use `401` for invalid authentication, `403` for insufficient authority, `409` for genuine state/identity conflicts, and `429` or `503` with retry guidance for transient limits/contention. Clients must not treat every conflict as retryable or discard useful error details.
 
@@ -260,10 +279,11 @@ Acceptance requires no duplicate ownership or lost terminal results, no cross-li
 ## Delivery
 
 1. Implement plant creation/ownership, scoped authorization, both authentication paths, and the HTML/Datastar application against separate test plants.
-2. Build durable server-side provisioning and the installer flow from RFC 001. Demonstrate enrollment by a plant registrar without directory privileges, an operator script, or a continuing user session.
+2. Build durable server-side provisioning and the installer flow from RFC 001. Demonstrate initially unassigned enrollment by an enrollment administrator without directory privileges, an operator script, or a continuing user session.
 3. Exercise two workbenches producing separate verified PRs, then interruption, revocation, rotation, and the synthetic fleet tests.
-4. Verify cross-plant denial, owner transfer, inherited/resource-scoped roles, owner/plant-registrar enrollment without separate approval, job recovery without duplicate directory objects, and missing provisioning consent.
+4. Verify cross-plant denial, owner transfer, inherited/resource-scoped roles, dedicated enrollment administration, versioned membership without identity replacement, job recovery without duplicate directory objects, and missing provisioning consent.
 5. Verify cookie/antiforgery behavior, bearer-only API responses, shared cookie keys across instances, and authorized Datastar reconnect after role revocation.
+6. Verify durable retirement after local credentials/journals have been removed, accepted versus unconfirmed uninstall requests, administrative recovery without device reinstall, and no retirement during an MSI upgrade.
 
 No Azure provisioning, identity grants, or package rollout is authorized by accepting these draft documents alone.
 

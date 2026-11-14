@@ -109,6 +109,12 @@ public static class LocalState
 
     public static FileStream Lock(string root, string name)
     {
+        var directory = new DirectoryInfo(root);
+        var entry = new FileInfo(Path.Combine(root, name));
+        if (directory.LinkTarget is not null || entry.LinkTarget is not null ||
+            directory.Exists && (directory.Attributes & FileAttributes.ReparsePoint) != 0 ||
+            entry.Exists && (entry.Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Maintenance/runtime locks must not traverse filesystem links.");
         Directory.CreateDirectory(root);
         try
         {

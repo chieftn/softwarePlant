@@ -19,8 +19,10 @@ info:
 
     Plant creation additionally requires Factory.PlantCreator. Plant reads require
     current permission to read the plant; plant updates require current ownership.
-    Service-wide enrollment inventory, submission, assignment and retirement require
+    Service-wide enrollment inventory, submission, assignment and administrative retirement require
     delegated Factory.EnrollmentAdministrator in addition to Factory.User and Plant.Access.
+    Device self-retirement requires Workbench.Connect and the exact provisioned
+    tenant, client and service-principal binding; it grants no inventory or administrator access.
     Devices enroll unassigned. Assignment requires registration authority over both
     source and destination plants; unassigning retains enrollment and identity.
     Service entry alone grants no plant access. A resource-only grant does not
@@ -735,7 +737,9 @@ paths:
         preventing delayed submission from resurrecting it. Without a draft an
         unknown operation returns 404; a mismatched existing draft returns 409.
         Repeats return current retirement status, not an immutable old response.
-        Local software/certificate cleanup is separate and must await retired.
+        Local software/certificate cleanup is separate. MSI 0.1.4 makes a bounded
+        retirement attempt before full owned-local cleanup, even when retirement
+        is unconfirmed; only an acknowledged transition proves revoked access.
         Disabling new enrollment does not disable retirement or existing connections.
         Missing provisioning configuration revokes access but requires attention.
       parameters:
@@ -754,7 +758,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Enrollment'
         '202':
-          description: Access revoked; retirement is pending or requires attention. This is not permission to erase credentials.
+          description: Access revoked; directory retirement is pending or requires attention and continues independently of device cleanup.
           content:
             application/json:
               schema:
@@ -769,6 +773,51 @@ paths:
           description: Unknown operation without its original draft.
         '409':
           $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/retire-self:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: retireOwnEnrollment
+      tags: [Enrollment]
+      summary: Revoke only the authenticated device's own enrollment and request durable retirement.
+      description: |
+        Require an application token with Workbench.Connect and the exact
+        provisioned tenant, application client ID and service-principal object ID.
+        Accept ready/active identities and idempotent retirement retries. Require an
+        empty body and Idempotency-Key equal to operationId; never accept caller-selected
+        directory objects, permissions or drafts. No human, inventory or Graph grant
+        is conferred. Unknown or differently bound enrollments return 403.
+        Revoke access atomically before directory cleanup. Accepted cleanup survives
+        device/key/journal removal. Offline or lost responses do not prove revocation.
+        Missing device credentials or incomplete unbound enrollment require
+        administrator retirement through inventory; they do not prevent local uninstall.
+      security:
+        - WorkbenchBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: This identity's retirement is confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Enrollment'
+        '202':
+          description: Access revoked; directory cleanup is pending or requires administrator attention.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Enrollment'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/Unavailable'
         default:

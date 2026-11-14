@@ -25,16 +25,30 @@ public sealed partial class EnrollmentOperations
         return View(record) with { Presence = report?.Presence, LastSeenAt = report?.RecordedAt };
     }
 
-    public async Task<EnrollmentView> RevokeAsync(string operationId, ApiCaller caller,
+    public Task<EnrollmentView> RevokeAsync(string operationId, ApiCaller caller,
         CancellationToken cancellationToken, EnrollmentDraft? unsubmitted = null)
     {
         caller.RequireEnrollmentAdministrator();
+        return RetireAsync(operationId, caller, cancellationToken, unsubmitted, false);
+    }
+
+    public Task<EnrollmentView> RetireSelfAsync(string operationId, ApiCaller caller,
+        CancellationToken cancellationToken) => RetireAsync(operationId, caller, cancellationToken, null, true);
+
+    private async Task<EnrollmentView> RetireAsync(string operationId, ApiCaller caller,
+        CancellationToken cancellationToken, EnrollmentDraft? unsubmitted, bool self)
+    {
         var canRetire = Guid.TryParse(settings.ProvisioningClientId, out var provisioner) && provisioner != Guid.Empty;
         var retirementState = canRetire ? "revoking" : "retirementNeedsAttention";
         var retirementError = canRetire ? null : "Access is revoked, but directory retirement requires restoring the provisioning configuration and retrying.";
         for (var attempt = 0; attempt < 3; attempt++)
         {
             var stored = await ReadAsync(operationId, cancellationToken);
+            if (self && (stored?.Record is not EnrollmentRecord machine ||
+                caller.Principal.TenantId != api.TenantId || machine.ClientId != caller.ClientId ||
+                machine.ServicePrincipalId != caller.Principal.ObjectId ||
+                machine.State is not ("ready" or "active" or "revoking" or "retirementNeedsAttention" or "retired")))
+                throw ApiProblems.Forbidden();
             if (unsubmitted is not null)
             {
                 unsubmitted.Validate();

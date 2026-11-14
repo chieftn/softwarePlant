@@ -108,6 +108,61 @@ public sealed class EnrollmentTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task DeviceRetiresOnlyItsOwnIdentityAndServerFinishesWithoutDevice(bool activate)
+    {
+        using var app = new EnrollmentTestApplication();
+        using var human = app.Human();
+        var plant = await Plant(human);
+        using var key = RSA.Create(2048);
+        var draft = Draft(key);
+        using var submitted = await Submit(human, plant, draft, key);
+        for (var i = 0; i < 3; i++)
+            await app.AdvanceAsync(plant, draft.OperationId);
+        using var machine = app.Daemon();
+        if (activate)
+        {
+            using var activated = await Activate(machine, plant, draft.OperationId);
+            activated.EnsureSuccessStatusCode();
+            await Assign(human, draft.OperationId, plant, 0);
+        }
+        var path = $"/v1/enrollments/{draft.OperationId}/retire-self";
+        async Task<HttpResponseMessage> Retire(HttpClient client, string? operation = null, object? body = null)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, path);
+            request.Headers.Add("Idempotency-Key", operation ?? draft.OperationId);
+            if (body is not null)
+                request.Content = JsonContent.Create(body);
+            return await client.SendAsync(request);
+        }
+        using var wrongClient = app.Daemon(clientId: Guid.NewGuid().ToString("D"));
+        using var wrongPrincipal = app.Daemon(subject: Guid.NewGuid().ToString("D"));
+        using var forbiddenClient = await Retire(wrongClient);
+        using var forbiddenPrincipal = await Retire(wrongPrincipal);
+        using var forbiddenHuman = await Retire(human);
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenClient.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenPrincipal.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenHuman.StatusCode);
+        using var badKey = await Retire(machine, Guid.NewGuid().ToString("D"));
+        using var badBody = await Retire(machine, body: new { arbitrary = "target" });
+        Assert.Equal(HttpStatusCode.BadRequest, badKey.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, badBody.StatusCode);
+        app.Services.GetRequiredService<EnrollmentSettings>().Enabled = false;
+        using var retired = await Retire(machine);
+        using var replay = await Retire(machine);
+        Assert.Equal(HttpStatusCode.Accepted, retired.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, replay.StatusCode);
+        using var blocked = await machine.GetAsync($"/v1/enrollments/{draft.OperationId}/connection");
+        Assert.Equal(HttpStatusCode.Forbidden, blocked.StatusCode);
+        await app.AdvanceAsync(plant, draft.OperationId);
+        Assert.Equal("retired", Assert.Single(app.Store.All<EnrollmentRecord>()).State);
+        Assert.Equal(1, app.Directory.ApplicationsDeleted);
+        using var completedReplay = await Retire(machine);
+        Assert.Equal(HttpStatusCode.OK, completedReplay.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task DisablingNewEnrollmentDoesNotDisableExistingConnectionsOrRetirement(bool removeProvisioner)
     {
         using var app = new EnrollmentTestApplication();

@@ -42,7 +42,7 @@ $package = Join-Path $output 'runtime-package'
 & (Join-Path $PSScriptRoot 'Publish-Workbench.ps1') -ReleaseId $ReleaseId -OutputDirectory $package
 $image = Join-Path $output 'image'
 & dotnet publish (Join-Path $PSScriptRoot '..\Factory.Workbench.Installer\Factory.Workbench.Installer.csproj') `
-    --configuration Release --runtime win-x64 --self-contained true --output $image --nologo
+    --configuration Release --runtime win-x64 --self-contained true "-p:Version=$Version" --output $image --nologo
 if ($LASTEXITCODE -ne 0) { throw 'Graphical setup publication failed.' }
 New-Item -ItemType Directory -Path (Join-Path $image 'payload') | Out-Null
 Copy-Item -LiteralPath (Join-Path $package 'host') -Destination (Join-Path $image 'payload') -Recurse
@@ -51,8 +51,9 @@ $profile | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $image 
 $helper = Join-Path $output 'helper'
 & dotnet publish (Join-Path $PSScriptRoot '..\Factory.Workbench.Setup\Factory.Workbench.Setup.csproj') `
     --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true --output $helper --nologo
+    -p:IncludeNativeLibrariesForSelfExtract=true "-p:Version=$Version" --output $helper --nologo
 if ($LASTEXITCODE -ne 0) { throw 'Embedded lifecycle helper publication failed.' }
+Copy-Item -LiteralPath (Join-Path $helper 'Factory.Workbench.Setup.exe') -Destination $image -Force
 
 $namespace = 'http://wixtoolset.org/schemas/v4/wxs'
 $document = [xml]"<Wix xmlns='$namespace'><Fragment><DirectoryRef Id='INSTALLFOLDER'/><ComponentGroup Id='PublishedPayload'/></Fragment></Wix>"
@@ -84,7 +85,8 @@ Get-ChildItem -LiteralPath $image -File -Recurse | Sort-Object FullName | ForEac
     $component.SetAttribute('Guid', '*')
     $component.SetAttribute('Directory', $(if ($directory) { "D$(Get-Identifier $directory)" } else { 'INSTALLFOLDER' }))
     $file = $document.CreateElement('File', $namespace)
-    $file.SetAttribute('Id', $(if ($relative -eq 'Factory.Workbench.Installer.exe') { 'WorkbenchSetup' } else { "F$id" }))
+    $file.SetAttribute('Id', $(if ($relative -eq 'Factory.Workbench.Installer.exe') { 'WorkbenchSetup' }
+        elseif ($relative -eq 'Factory.Workbench.Setup.exe') { 'LifecycleTool' } else { "F$id" }))
     $file.SetAttribute('Source', $_.FullName)
     $file.SetAttribute('KeyPath', 'yes')
     $component.AppendChild($file) | Out-Null
@@ -98,6 +100,8 @@ $project = Join-Path $PSScriptRoot '..\Factory.Workbench.Package\Factory.Workben
     "-p:SuppressValidation=$($SkipMsiValidation.IsPresent)" `
     "-p:OutputPath=$(Join-Path $output 'msi')" --nologo --verbosity minimal
 if ($LASTEXITCODE -ne 0) { throw 'Windows Installer package build failed.' }
-Write-Output "Unsigned development MSI: $(Join-Path $output "msi\Factory.Workbench.$Version.msi")"
+$built = @(Get-ChildItem -LiteralPath (Join-Path $output 'msi') -Filter "Factory.Workbench.$Version.msi" -File -Recurse)
+if ($built.Count -ne 1) { throw 'Expected exactly one completed MSI output.' }
+Write-Output "Unsigned development MSI: $($built[0].FullName)"
 Write-Warning 'End users launch the MSI, not PowerShell. Entra/Graph provisioning must be configured by the service administrator first.'
 if ($SkipMsiValidation) { Write-Warning 'Windows Installer ICE validation was explicitly skipped. Run it in the isolated installer acceptance environment.' }

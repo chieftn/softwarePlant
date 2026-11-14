@@ -19,6 +19,127 @@ public sealed class WorkbenchLifecycleTests : IDisposable
     private string Binaries => Path.Combine(directory, "binaries");
     private WorkbenchLifecycle Lifecycle => new(Root, service);
 
+    [Theory]
+    [InlineData("revoking", "pending")]
+    [InlineData("retirementNeedsAttention", "attention")]
+    [InlineData("retired", "confirmed")]
+    [InlineData("offline", "unconfirmed")]
+    public async Task FullUninstallRemovesOwnedStateWithoutWaitingForDirectoryRetirement(string remote, string expected)
+    {
+        await Install();
+        await Lifecycle.StartAsync(CancellationToken.None);
+        var journal = Enrollment();
+        var diagnostics = new SetupDiagnostics(Root);
+        diagnostics.Record("test", "started");
+        var certificateRemoved = false;
+        var calls = 0;
+        var removal = new WorkbenchFullRemoval(Root, service, _ => certificateRemoved = true, diagnostics);
+        var transaction = Guid.NewGuid().ToString("D");
+        var result = await removal.PrepareAsync(transaction, _ =>
+        {
+            calls++;
+            if (remote == "offline")
+                throw new HttpRequestException("Synthetic outage");
+            return Task.FromResult(new EnrollmentView("1", journal.OperationId, null,
+                $"wb-{Guid.Parse(journal.InstallationId):N}", remote, DateTimeOffset.UtcNow));
+        }, CancellationToken.None);
+        Assert.Equal(expected, result.RemoteOutcome);
+        Assert.Equal(1, calls);
+        Assert.False(certificateRemoved);
+        Assert.False(service.Running);
+        await Assert.ThrowsAsync<InvalidDataException>(() => Lifecycle.StartAsync(CancellationToken.None));
+        await Lifecycle.CommitInstallerAsync(transaction, CancellationToken.None);
+        removal.Purge();
+        Assert.True(certificateRemoved);
+        Assert.False(Directory.Exists(Root));
+        Assert.False(Directory.Exists(Binaries));
+        Configure();
+        Assert.NotEqual(journal.InstallationId, ConfigurationStore.Read(Root).InstallationId);
+    }
+
+    [Fact]
+    public async Task FailedCertificateCleanupRetainsRecoveryStateAndCanBeRetried()
+    {
+        await Install();
+        Enrollment();
+        var diagnostics = new SetupDiagnostics(Root);
+        var fails = true;
+        var removal = new WorkbenchFullRemoval(Root, service, _ =>
+        {
+            if (fails)
+                throw new IOException("Synthetic credential cleanup failure.");
+        }, diagnostics);
+        var transaction = Guid.NewGuid().ToString("D");
+        await removal.PrepareAsync(transaction, null, CancellationToken.None);
+        await Lifecycle.CommitInstallerAsync(transaction, CancellationToken.None);
+        Assert.Throws<IOException>(removal.Purge);
+        Assert.True(File.Exists(Path.Combine(Root, "config.json")));
+        Assert.True(File.Exists(Path.Combine(Root, "removal-intent.json")));
+        fails = false;
+        removal.Purge();
+        Assert.False(Directory.Exists(Root));
+    }
+
+    [Fact]
+    public async Task FullRemovalRefusesUnownedStateAndDoesNotReactivateAfterRollback()
+    {
+        await Install();
+        await Lifecycle.StartAsync(CancellationToken.None);
+        Enrollment();
+        File.WriteAllText(Path.Combine(Root, "operator-owned.txt"), "preserve");
+        var certificatesRemoved = false;
+        var removal = new WorkbenchFullRemoval(Root, service, _ => certificatesRemoved = true, new SetupDiagnostics(Root));
+        var transaction = Guid.NewGuid().ToString("D");
+        await Assert.ThrowsAsync<InvalidDataException>(() => removal.PrepareAsync(transaction, null, CancellationToken.None));
+        await Lifecycle.RollbackInstallerAsync(transaction, CancellationToken.None);
+        Assert.False(service.Running);
+        Assert.False(LocalState.ReadInstallation(Root).RunRequested);
+        Assert.False(certificatesRemoved);
+        Assert.Equal("preserve", File.ReadAllText(Path.Combine(Root, "operator-owned.txt")));
+        Assert.True(File.Exists(Path.Combine(Root, "binding.json")));
+    }
+
+    [Fact]
+    public async Task FullUninstallCanFinishAfterAnInterruptedMsiUpdate()
+    {
+        await Install();
+        await Lifecycle.ApplyInstallerUpdateAsync(Guid.NewGuid().ToString("D"), Package("second"), CancellationToken.None);
+        var removal = new WorkbenchFullRemoval(Root, service, _ => { }, new SetupDiagnostics(Root));
+        var transaction = Guid.NewGuid().ToString("D");
+        await removal.PrepareAsync(transaction, null, CancellationToken.None);
+        await Lifecycle.CommitInstallerAsync(transaction, CancellationToken.None);
+        removal.Purge();
+        Assert.False(Directory.Exists(Binaries));
+        Assert.False(Directory.Exists(Root));
+    }
+
+    [Fact]
+    public async Task MsiStagesServiceRemovalBeforeItsBoundedRetirementRequest()
+    {
+        await Install();
+        await Lifecycle.StartAsync(CancellationToken.None);
+        var journal = Enrollment();
+        var removal = new WorkbenchFullRemoval(Root, service, _ => { }, new SetupDiagnostics(Root));
+        var transaction = Guid.NewGuid().ToString("D");
+        var calls = 0;
+        Task<EnrollmentView> Retire(CancellationToken _)
+        {
+            calls++;
+            Assert.False(service.Running);
+            return Task.FromResult(new EnrollmentView("1", journal.OperationId, null,
+                $"wb-{Guid.Parse(journal.InstallationId):N}", "revoking", DateTimeOffset.UtcNow));
+        }
+        await removal.PrepareAsync(transaction, Retire, CancellationToken.None, requestRetirement: false);
+        Assert.Equal(0, calls);
+        var accepted = await removal.RequestRetirementAsync(Retire, CancellationToken.None);
+        await removal.RequestRetirementAsync(Retire, CancellationToken.None);
+        Assert.Equal("pending", accepted.RemoteOutcome);
+        Assert.Equal(1, calls);
+        await Lifecycle.CommitInstallerAsync(transaction, CancellationToken.None);
+        removal.Purge();
+        Assert.False(Directory.Exists(Root));
+    }
+
     [Fact]
     public async Task RetirementFailureStopsTheServiceButPreservesCredentialsAndBlocksRestart()
     {

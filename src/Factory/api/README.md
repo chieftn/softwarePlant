@@ -42,13 +42,14 @@ Use `/v1/enrollments` as `E` below. These are service-wide, not plant-scoped rou
 | GET | `E/{operationId}` | Current state for any authorized enrollment administrator. |
 | PUT | `E/{operationId}/assignment` | Assign/move/unassign using `expectedVersion`; omit `plantId` to unassign. |
 | POST | `E/{operationId}/revoke` | Revoke access and retire owned directory identity; optional original draft cancels an unsubmitted operation. |
+| POST | `E/{operationId}/retire-self` | Exact certificate-authenticated device identity retires only its own ready/active enrollment; idempotent retirement retries. Empty body; key equals enrollment ID. No new Graph/admin grant. |
 | POST | `E/{operationId}/activate` | Match the provisioned application token before activating enrollment. |
 | GET | `E/{operationId}/connection` | Machine reads its current nullable plant assignment and version. |
 | PUT | `E/{operationId}/presence` | Active machine reports Factory presence, including while unassigned. |
 
 Human enrollment operations require delegated `Plant.Access`, `Factory.User` and the explicitly assigned `Factory.EnrollmentAdministrator` role. Plant ownership alone is insufficient. Assignments additionally require owner/plant-registrar authority over source and destination plants. The website uses the same operations with cookie authentication and antiforgery protection. Devices enroll without selecting a plant; assignment is a separate website action.
 
-Persist the original operation ID/key before submitting. Retrying an identical draft may use a fresh challenge; changing the draft under that ID returns 409. Provisioning checkpoints, service-wide installation reservations and ownership/public-key reconciliation prevent blind duplicate directory creation. `needsAttention` requires reconciliation, not a new identity. Activation and retirement require `Idempotency-Key` equal to the enrollment ID. Retirement retries return current status; only `retired` permits local credential cleanup.
+Persist the original operation ID/key before submitting. Retrying an identical draft may use a fresh challenge; changing the draft under that ID returns 409. Provisioning checkpoints, service-wide installation reservations and ownership/public-key reconciliation prevent blind duplicate directory creation. `needsAttention` requires reconciliation, not a new identity. Activation and retirement require `Idempotency-Key` equal to the enrollment ID. Retirement retries return current status. MSI `0.1.4` can complete owned-local removal after a bounded retirement attempt, even if unconfirmed; only an acknowledged server transition proves revoked access. Accepted retirement must finish without the device/key/journal.
 
 Assignment uses `expectedVersion` rather than `Idempotency-Key`. Moves/unassignments retain identity; plant registration/presence must carry the current `assignmentVersion`. Stale reports are rejected even after moving back to the same plant. An already-authorized in-flight plant request may finish; obsolete membership views suppress its reports. No workload execution/cancellation is implemented.
 

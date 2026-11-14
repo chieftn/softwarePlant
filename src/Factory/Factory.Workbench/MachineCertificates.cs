@@ -9,7 +9,37 @@ namespace Factory.Workbench;
 [SupportedOSPlatform("windows")]
 public static class MachineCertificates
 {
-    public static void ProtectStateDirectory(string root)
+    public static void ValidateInstallerExecutable(string executable)
+    {
+        var programFiles = Path.TrimEndingDirectorySeparator(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)) + Path.DirectorySeparatorChar;
+        var path = Path.GetFullPath(executable);
+        if (!path.StartsWith(programFiles, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
+            throw new InvalidDataException("The privileged installer helper must be installed beneath protected Program Files.");
+        var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        for (FileSystemInfo? item = new FileInfo(path); item is not null &&
+            !Path.TrimEndingDirectorySeparator(item.FullName).Equals(
+                Path.TrimEndingDirectorySeparator(programFiles), StringComparison.OrdinalIgnoreCase);
+            item = item is FileInfo file ? file.Directory : ((DirectoryInfo)item).Parent)
+        {
+            if ((item.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("The privileged installer helper must not traverse links.");
+            FileSystemSecurity acl = item is FileInfo fileInfo ? fileInfo.GetAccessControl() : ((DirectoryInfo)item).GetAccessControl();
+            if (acl.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner ||
+                owner != administrators && owner != system)
+                throw new UnauthorizedAccessException("Installer helper ownership must be Administrators or SYSTEM.");
+            var writes = FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles |
+                FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+            foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+                if (rule.AccessControlType == AccessControlType.Allow && (rule.PropagationFlags & PropagationFlags.InheritOnly) == 0 &&
+                    (rule.FileSystemRights & writes) != 0 && !rule.IdentityReference.Equals(administrators) &&
+                    !rule.IdentityReference.Equals(system))
+                    throw new UnauthorizedAccessException("The installer helper permits untrusted modification.");
+        }
+    }
+
+    public static void ProtectStateDirectory(string root, bool allowRemovalRecovery = false)
     {
         var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
         var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
@@ -45,12 +75,21 @@ public static class MachineCertificates
         {
             if (File.Exists(Path.Combine(root, "config.json")))
                 ConfigurationStore.Read(root);
+            else if (allowRemovalRecovery && File.Exists(Path.Combine(root, "removal-intent.json")))
+            {
+                var removal = LocalState.Read<RemovalIntent>(Path.Combine(root, "removal-intent.json"));
+                if (removal.SchemaVersion != "1" || !removal.CertificatesRemoved ||
+                    !Guid.TryParseExact(removal.InstallationId, "D", out var id) || id == Guid.Empty)
+                    throw new InvalidDataException("Removal recovery requires verified prior certificate cleanup.");
+            }
             else if (Directory.EnumerateFileSystemEntries(root).Any(path =>
-                Path.GetFileName(path) != "maintenance.lock" && Path.GetFileName(path) != "runtime") ||
+                Path.GetFileName(path) is not ("maintenance.lock" or "runtime" or "logs")) ||
                 Directory.Exists(LocalState.RuntimeDirectory(root)) &&
                 Directory.EnumerateFileSystemEntries(LocalState.RuntimeDirectory(root)).Any(path =>
                     Path.GetFileName(path) is not ("runtime.lock" or "plant-reports.lock")))
                 throw new InvalidDataException("A nonempty state directory has no valid configuration. Restore/reconcile it; do not generate another installation identity.");
+            if (Directory.Exists(Path.Combine(root, "logs")))
+                SetupDiagnostics.ValidateDirectory(Path.Combine(root, "logs"));
         }
         directory.Create();
         var protectedAcl = new DirectorySecurity();
@@ -180,12 +219,40 @@ public static class MachineCertificates
                 if (!rsa.ExportSubjectPublicKeyInfo().AsSpan().SequenceEqual(publicKey.ExportSubjectPublicKeyInfo()))
                     throw new InvalidDataException("The named private key does not match the enrolled certificate.");
             }
+
             key.Delete();
         }
         foreach (var certificate in matches)
         {
             using (certificate)
                 store.Remove(certificate);
+        }
+    }
+
+    public static void RemoveOwned(string root)
+    {
+        var configuration = ConfigurationStore.Read(root);
+        var name = $"Factory.Workbench.{Guid.Parse(configuration.InstallationId):N}";
+        using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+        store.Open(OpenFlags.ReadOnly);
+        var matches = store.Certificates.Cast<X509Certificate2>().Where(cert => cert.FriendlyName == name).ToArray();
+        try
+        {
+            if (matches.Length > 1)
+                throw new InvalidDataException("Multiple owned certificates require reconciliation before full removal.");
+            var journal = File.Exists(Path.Combine(root, "enrollment.json")) ? BindingStore.ReadJournal(root) : null;
+            var binding = File.Exists(Path.Combine(root, "binding.json")) ? BindingStore.Read(root) : null;
+            if (journal is not null && binding is not null && journal.CertificateThumbprint != binding.CertificateThumbprint)
+                throw new InvalidDataException("Enrollment and binding certificates disagree.");
+            var thumbprint = binding?.CertificateThumbprint ?? journal?.CertificateThumbprint ?? matches.SingleOrDefault()?.Thumbprint;
+            if (matches.Length == 1 && thumbprint != matches[0].Thumbprint)
+                throw new InvalidDataException("The enrollment journal does not match the owned certificate.");
+            Remove(root, thumbprint ?? new string('0', 40));
+        }
+        finally
+        {
+            foreach (var certificate in matches)
+                certificate.Dispose();
         }
     }
 

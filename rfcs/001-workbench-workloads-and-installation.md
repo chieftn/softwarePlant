@@ -2,6 +2,8 @@
 
 Status: Draft proposal. This specifies work to build, not commands or capabilities already available.
 
+Lifecycle decision: installation includes enrollment; version upgrades preserve enrollment; deliberate uninstall removes installation-owned local artifacts and makes a bounded attempt to retire the remote enrollment. The `0.1.4` connection-only implementation adds this flow and diagnostics; real machine acceptance remains outstanding. The earlier MSI `0.1.3` does not implement this contract. Accepting this RFC alone does not authorize implementation or deployment.
+
 Companion: [RFC 002: Plant Service](002-plant-service.md).
 
 Project structure: [RFC 003: Factory Solution and Projects](003-factory-solution-and-projects.md).
@@ -10,7 +12,7 @@ Project structure: [RFC 003: Factory Solution and Projects](003-factory-solution
 
 This RFC specifies the workbench component of Factory, not the complete factory application.
 
-A workbench is an installed client that registers with a plant and acts as a **metaruntime**: it configures and runs the Copilot SDK according to production-line specifications. The client includes setup, the Windows host, and the Linux worker; it is not a second host alongside the existing workbench.
+A workbench is an installed client that enrolls with Factory, can be assigned to a plant, and acts as a **metaruntime**: it configures and runs the Copilot SDK according to production-line specifications. The client includes setup, the Windows host, and the Linux worker; it is not a second host alongside the existing workbench.
 
 A workbench hosts the development inner loop: prepare a checkout, run a coding agent, build and test the change, and return evidence. Publication of a branch and PR is an explicitly permitted output, not an implicit consequence of running an agent.
 
@@ -20,23 +22,24 @@ The operating target is an unattended workbench: after initial installation and 
 
 ## Plant and Production-Line Boundary
 
-The plant owns enrolled machines, available execution capabilities, assignment delivery, claims, and results. A production line supplies agent roles, repositories, workloads, production methods, and acceptance criteria.
+Factory owns service-wide enrollment, device identity and retirement. A plant owns membership/admission to its execution resources, available capabilities, assignment delivery, claims, and results. A production line supplies agent roles, repositories, workloads, production methods, and acceptance criteria.
 
 Installing a workbench must not permanently bind it to a product repository or a line coordinator. Line configuration comes from the plant service and is resolved into an immutable assignment snapshot. The installed software supplies the implementations that understand that snapshot.
 
-Workbenches initiate registration with a plant through local setup. A plant owner or user with `Workbench.Registrar` authority authorizes that registration during setup; there is no separate approver or pending-approval path. A tenant sign-in without plant-scoped registration authority is insufficient.
+Installation signs in a user with `Factory.User` and the dedicated `Factory.EnrollmentAdministrator` role. That user authorizes enrollment into Factory inventory, initially unassigned; plant ownership alone does not permit enrollment. There is no separate approver or pending-approval path. Enrollment makes the device available for plant assignment; it does not join a plant.
 
-Registration has three dimensions:
+Enrollment, plant membership, and runtime reporting are separate operations:
 
 | Dimension | Responsibility |
 |---|---|
-| Join a plant | Local setup signs the user in, selects a plant, and enrolls the machine identity under that user's plant authority. |
-| Register capabilities | The running workbench authenticates as that machine and reports its installed runtime, versions, and supported capabilities. |
-| Report presence | The workbench reports readiness and activity; the plant records its last contact. |
+| Enroll a device | Guided installation establishes and verifies a dedicated device identity in Factory, without selecting a plant. |
+| Assign to a plant | An administrator uses the website to assign, move or unassign the device. Enrollment administration and ownership/plant-scoped `Workbench.Registrar` authority over the source and destination plants are required, where present. |
+| Register capabilities | The running workbench authenticates as that machine and reports its installed runtime, versions, and supported capabilities to its current plant. |
+| Report presence | The workbench reports Factory presence even while unassigned, and plant presence only under current membership. |
 
-Enrollment and capability registration are distinct technical steps in one guided registration experience. Runtime registration does not create admission or permanently select a production line. The plant delivers assignments only to admitted workbenches with compatible capabilities.
+Enrollment and capability registration remain distinct technical steps. Runtime registration does not create admission or permanently select a production line. The plant delivers work assignments only to admitted workbenches with compatible capabilities. Device-to-plant assignment is not a work assignment.
 
-The website is read-only for workbench registration: it displays registered machines, capabilities, and status. It does not create workbenches or approve enrollment requests. Production-line configuration is supplied afterward through assignments, not selected as part of machine registration.
+The website lists service-wide enrollments and supports assignment, movement, unassignment and retirement. It does not fabricate a device identity or approve a second enrollment request. A device belongs to at most one plant at a time; versioned membership prevents old plant reports from becoming valid after a move. Production-line configuration is supplied afterward through work assignments, not selected during enrollment.
 
 The effective permission set is the intersection of local machine limits, server-approved line bindings, and assignment requests. A server setting cannot widen local permissions. One workbench may serve several lines sequentially, but only where their code and credentials belong to the same trust boundary.
 
@@ -103,18 +106,34 @@ Provide a signed Windows installer with a guided setup entry point for matching 
 
 Initial installation, enrollment, and exceptional repair may require an authorized person. Routine startup, reconnection, credential renewal, and approved maintenance must not depend on that person's session. Request elevation only for machine-scoped changes that require it.
 
+### Agreed Install, Upgrade and Uninstall Contract
+
+The MSI is the user's entry point to one guided installation experience. Internal helpers, elevation and interactive authentication can run in separate phases, but the user should not have to discover and initiate a separate enrollment task after being told installation is complete.
+
+| User intent | Required outcome |
+|---|---|
+| **Install** | Install/configure the software and service, sign in, enroll, verify actual service-account authentication, and show the connected device in Factory inventory, initially unassigned and available for plant assignment. Plant assignment is a later website action, not an installation prerequisite. |
+| **Upgrade** | Run the newer MSI over the existing installation. Replace/reset software and service configuration for the selected release while preserving enrollment, certificate/private key, plant membership, local policy/configuration and recovery journals/results. Do not require human enrollment sign-in again. |
+| **Repair** | Restore the existing installation without replacing its device identity or manufacturing a new enrollment. |
+| **Uninstall** | Safely stop owned execution, attempt remote retirement, then remove all installation-owned local artifacts. Remote/network failure does not require retaining local credentials or reinstalling software to finish local removal. |
+
+Installing software is an intermediate milestone, not the enrollment success condition. If sign-in, provisioning or verification fails or is cancelled, report **software installed; enrollment incomplete**, retain resumable progress, and offer retry without another MSI run. Do not falsely roll that outcome into "enrolled" or erase an uncertain directory operation to start over.
+
+An upgrade's internal removal of the old MSI is not a deliberate uninstall: it must never trigger retirement or full local cleanup. "Reset" during upgrade means refresh the software/service, not reset device identity, membership, permissions or unresolved execution evidence. A changed tenant/service profile is not an ordinary upgrade and must not silently redirect an existing identity.
+
 Setup supports the following actions:
 
 | Action | Behavior |
 |---|---|
 | Inspect | Read-only checks of the package, machine, WSL user, tools, configuration, credentials, and connectivity. |
 | Configure | Prompt for missing values, show existing selections, and persist non-secret configuration. |
-| Install | Show required changes, apply approved dependency repairs, stage matching host/worker versions, and install the service under its dedicated identity. |
-| Enroll | Sign the user in locally, select a plant, register under the user's plant authority without separate approval, and verify the provisioned daemon identity. |
+| Install | Guide package/prerequisite changes, service configuration, sign-in, enrollment and connection verification as one flow. |
+| Enroll / resume | Run or resume the enrollment phase of installation under an enrollment administrator; establish an initially unassigned Factory identity and verify the daemon. |
 | Verify | Check connection readiness separately from the requested coding/publication workload. |
 | Start / Stop | Control the Windows Service and its owned worker processes. An intentional stop must not be treated as a crash requiring restart. Foreground execution is diagnostic only and must not run alongside the service. |
-| Upgrade / Rollback | Drain execution, validate compatibility, and switch matching host/worker releases without replacing identity or journals. |
-| Uninstall / Retire | Remove installed software separately from retiring the plant identity or purging state. Preserve identity and journals by default. |
+| Upgrade / Rollback | Drain execution, validate compatibility, and switch matching host/worker releases without replacing identity, membership or journals. |
+| Uninstall | Attempt remote retirement before destroying credentials; remove all owned local artifacts and report local and remote outcomes separately. No additional purge action is required. |
+| Retire remotely | Revoke/retire enrollment through Factory's UI without requiring the device to be online. This cannot remove local artifacts from an offline computer. |
 
 Every action reports passed, failed, unverified, or not applicable, with a specific repair. A failed probe is not proof that a dependency is absent. Inspection must not install tools, sign in, modify Git configuration, or submit work.
 
@@ -122,11 +141,11 @@ Connection verification uses registration/status operations without starting the
 
 ### Delivery Sequence
 
-The current Factory implementation includes an unsigned development MSI, graphical Entra sign-in and plant selection, resumable enrollment, and certificate-authenticated activation/registration/presence. The Windows Service uses a non-exportable machine CNG key under its dedicated virtual service account and persists outstanding reports before sending them. MSI maintenance updates an existing runtime and supports rollback and state-preserving uninstall. The website remains read-only for workbench registration. Production signing, automatic certificate rotation, live Entra/Graph and cold-boot acceptance, service-owned WSL, and worker execution remain incomplete; this is not yet a production-qualified unattended installation.
+Current MSI `0.1.3` installs software and launches a separate graphical setup for administrator sign-in, resumable service-wide enrollment and certificate-authenticated activation/presence. Devices start unassigned; the deployed website supports membership changes and retirement. The Windows Service uses a non-exportable machine CNG key under its dedicated virtual service account and persists outstanding reports before sending them. Its current MSI uninstall preserves identity/state; a separate setup action waits for remote retirement before local credential cleanup. That is the existing implementation, not the revised installation/uninstall contract above.
 
-Establish service-owned WSL and credential support, then deliver signed installation, enrollment, boot-time authentication, registration, and readiness reporting before adding assignment delivery and production-line execution to the new plant connection. The connection-only slice must not claim work or run a coding task.
+The `0.1.4` implementation adds guided continuation through enrollment, identity-preserving upgrade, full owned-local uninstall and explicit offline/retirement outcomes. Automatic MSI logging, persistent structured setup logs, failure-page log access and user-requested diagnostic export precede local purge. Actual installation, Graph provisioning/deletion, native credential cleanup and cold-boot acceptance remain unverified. Production signing, automatic certificate rotation, service-owned WSL and worker execution are also incomplete; this is not a production-qualified unattended installation.
 
-The plant service currently supports registration and presence for already-admitted workbenches. Enrollment authorization and identity provisioning are server prerequisites for guided setup, not capabilities a client wrapper can provide alone. The existing Foundry distributor connection is not the new plant API connection.
+The connection-only slice must not claim work or run a coding task. Establish service-owned WSL and credential support before adding assignment delivery and production-line execution. Enrollment authorization, identity provisioning and remote retirement are server responsibilities, not capabilities a client wrapper can provide alone. The existing Foundry distributor connection is not the new Factory API connection.
 
 Setup automates the approved enrollment and credential configuration steps. Runtime acquires and renews plant access tokens using the workbench's own identity, independently of the enrolling user's session. GitHub repository access and Copilot model access are checked separately inside WSL; plant enrollment grants neither.
 
@@ -135,7 +154,7 @@ Setup automates the approved enrollment and credential configuration steps. Runt
 | Step | Required behavior |
 |---|---|
 | Verify package | Validate a signed release manifest against the trusted publisher and check file digests. Report host, worker, protocol, schema, and bundled runtime versions. Reject mixed packages. |
-| Select context | Confirm plant URL, expected tenant/API identity, dedicated service identity, its WSL distribution/user, storage locations, and local permission limits. Keep the enrolling human distinct from the runtime identity. Reuse an existing installation when present. |
+| Select context | Confirm Factory URL, expected tenant/API identity, dedicated service identity, its WSL distribution/user, storage locations, and local permission limits. Do not select a plant. Keep the enrolling human distinct from the runtime identity. Reuse an existing installation when present. |
 | Check machine | Test architecture, WSL availability under the service identity, distribution state, non-interactive tool discovery, writable paths, disk space, clock, TLS, and required outbound endpoints. A successful check in the installer's session does not prove service readiness. |
 | Repair prerequisites | Offer versioned, supported installation steps for Windows/WSL runtimes and tools. Request elevation only for the step needing it. Record restart requirements and resume without recreating identity. |
 | Install binaries | Stage Windows and Linux releases, check the installed executables under the runtime identity, and activate matching versions only after both pass checks. Install the service without enabling work before enrollment and readiness checks succeed. |
@@ -143,7 +162,7 @@ Setup automates the approved enrollment and credential configuration steps. Runt
 | Check workload | Provision and probe supported unattended GitHub/Copilot credentials and Git author configuration under the service-owned WSL user. Do not rely on the installer's interactive credential cache. |
 | Verify execution | Offer an explicitly approved agent/verification smoke test, then a separate publication test if requested. State possible model charges and repository changes before running them. |
 | Enable startup | After connection verification, configure automatic service start at machine boot and bounded failure recovery. Show the service identity, distribution, permissions, and executable. Verify cold-boot operation without a user signing in before reporting unattended readiness. |
-| Report | Write a redacted local report and show the exact device, service identity, versions, readiness levels, and unresolved checks. Confirm server-side presence independently of process startup. |
+| Report | Write a redacted local report and show the exact device, service identity, versions, readiness levels, and unresolved checks. Complete the guided installation only after Factory confirms the connected enrollment; show that it is unassigned and link to its website inventory. Do not imply workload or cold-boot acceptance from a connection-only check. |
 
 Workload prerequisites are separate from base installation. A line may require Node, a .NET SDK, Python, browsers, or other tools; these are declared and version-checked rather than installed speculatively. Changes to package sources or execution of repository setup scripts require approval.
 
@@ -151,7 +170,7 @@ The packaged Copilot executable is an SDK runtime, not the interactive CLI. Setu
 
 ## Local Configuration and Startup
 
-Persist non-secret machine configuration under `%ProgramData%\Factory\Workbench\config.json`: service URL, expected tenant/API audience, installation and plant/workbench IDs, service identity, WSL distribution and user, client ID, certificate location/thumbprint, local repository/integration limits, paths, and active configuration revision. Validate the schema and write atomically. Restrict changes to authorized setup/administration and the service's required operations.
+Persist non-secret machine configuration under `%ProgramData%\Factory\Workbench\config.json`: service URL, expected tenant/API audience, installation/workbench identity, service identity, WSL distribution and user, local repository/integration limits, paths, and active configuration revision. Persist the enrollment ID, application client/service-principal IDs and certificate thumbprint in the binding/journal. Plant membership comes from Factory and is not a permanent local binding. Validate schemas and write atomically. Restrict changes to authorized setup/administration and the service's required operations.
 
 Keep Windows binaries in versioned release directories beneath `%ProgramFiles%\Factory\Workbench\releases`, protected from worker modification. Keep service journals, results, and bounded logs beneath `%ProgramData%\Factory\Workbench`, outside release directories and with appropriate access controls. Apply the same release/state separation to the Linux installation. An upgrade changes the selected release, not the identity or journals.
 
@@ -171,11 +190,31 @@ Configuration changes are explicit revisions. Validate a candidate before activa
 
 Upgrades use signed, approved packages and an explicit maintenance policy. Stop accepting assignments, drain the active execution, and persist pending reports before switching releases. Stage matching host/worker versions, check protocol and state compatibility, and record activation durably so interruption leaves a recoverable selected release. Apply elevated package changes through authorized installation tooling, not by granting the worker write access to installed binaries. Resume claims only after recovery and readiness checks succeed.
 
+The newer MSI overlays the existing installation; users do not uninstall first. Reconfigure/repair the owned service for the new release without deleting enrollment, credentials, membership, local policy or recovery state. Distinguish MSI upgrade removal, repair/rollback and real uninstall explicitly, including noninteractive invocations. Verify that upgrade-triggered removal performs neither remote retirement nor credential/state destruction. An upgrade must not clear pending retirement/removal intent or silently reactivate a revoked device; report the recovery required.
+
 Keep the previous compatible release for rollback after failed activation. Rollback must not downgrade incompatible configuration/journal formats, recreate identity, discard results, or replay work. An unresolved assignment blocks an unsafe switch. Do not force-kill work to meet a maintenance window; defer the upgrade and report the reason unless an authorized cancellation has been reconciled.
 
-Uninstall disables automatic startup, stops the service and its owned processes safely, and removes only this installation's registered service and binaries. Preserve configuration, identity, journals, and results by default so reinstall can recover the same workbench. Do not implicitly unregister a WSL distribution or remove shared prerequisites.
+### Complete Local Uninstall and Best-Effort Retirement
 
-Retiring the plant identity and purging retained local state are separate, explicitly authorized actions. Reconcile unresolved work before destructive removal. If the plant is unavailable, report retirement as incomplete; removing local software must not be reported as server-side revocation.
+Deliberate uninstall disables automatic startup, safely stops the service and owned processes, and removes all installation-owned local artifacts: service registration, binaries/releases, shortcuts and installer-owned settings, configuration/installation identity, bindings, certificates/private keys, journals, logs and owned execution state. This is the default uninstall behavior, not a second purge operation. If safe process termination or owned-artifact cleanup fails, report local removal as incomplete rather than erase ownership evidence or claim success.
+
+Remove only resources whose ownership is established. Do not remove shared prerequisites, shared WSL distributions or independently owned repositories/files. An installation-owned WSL environment belongs to full removal; uncertain ownership is a visible cleanup fault, not permission to delete a shared environment.
+
+Before deleting the local credential/journal, make a bounded, authenticated attempt to request remote retirement, including cancellation of partially submitted enrollment where possible. Record local cleanup and remote retirement as independent outcomes:
+
+| Remote outcome | Required uninstall behavior |
+|---|---|
+| Retirement confirmed | Complete local cleanup and report both outcomes accurately. Factory retains retired identity/audit history. |
+| Retirement accepted but still processing | Complete local cleanup; report retirement pending. The server must retain enough durable state to finish directory reconciliation/deletion without the device. |
+| Offline, unauthorized, rejected or response lost | Complete local cleanup if otherwise safe; explicitly report remote retirement as failed or unconfirmed and direct an enrollment administrator to Factory's inventory. Do not claim a request was durably queued if the service never acknowledged it. |
+
+Do not require a live Factory connection or successful remote retirement to destroy owned local credentials and complete local uninstall. Conversely, deleting a private key, stopping the service or observing stale presence does not revoke a previously issued token. Until the server accepts revocation, remote enrollment/plant membership may remain authorized. The website must support retiring that enrollment without access to the removed machine; do not require reinstall just to delete directory objects.
+
+Preserve server-side audit and execution history. Safely stop owned execution before destroying local evidence and surface uncertain external outcomes; local cleanup does not establish that remote execution/publication effects were reconciled. These require operator reconciliation, not automatic replay. A later fresh installation does not recover the removed device identity: it creates a new enrollment and starts unassigned. An old remote record can still need retirement; do not merge identities based on machine name.
+
+**Authorization decision (`0.1.4`):** the device uses its existing certificate-authenticated `Workbench.Connect` identity to call `POST /v1/enrollments/{id}/retire-self`. Require the exact enrolled tenant, application client ID and service-principal object ID, an empty body and the enrollment ID as idempotency key. Permit ready/active identities and idempotent retirement retries, never arbitrary target objects or global enrollment administration. No new Graph grants or embedded administrator credential are needed. Unbound/partial enrollment or unavailable credentials leave retirement unconfirmed for administrator follow-up, without blocking safe local removal. Deploying the new service endpoint is a separate rollout.
+
+Before purging local diagnostics, full-UI uninstall offers a user-requested redacted export outside owned directories. Keep native MSI logs separate from local setup state; early MSI failures expose the log path and log-opening controls. Retain neither private keys nor authentication tokens for diagnosis. Windows-managed installer/event logs, shared namespace folders and explicit user exports are not installation-owned state to purge.
 
 ## Authorization and Credential Flow
 
@@ -183,15 +222,15 @@ Use three separate authorities:
 
 | Authority | Purpose |
 |---|---|
-| Human Entra sign-in | Select an accessible plant and authorize initial enrollment or exceptional recovery under the user's plant-scoped role. Not a runtime dependency. |
+| Human Entra sign-in | Authorize initial enrollment or exceptional recovery with `Factory.EnrollmentAdministrator`. Plant membership additionally requires source/destination plant authority and is handled through the website. Not a runtime dependency. |
 | Workbench Entra application and local certificate | Unattended calls to the plant API as one approved machine identity. |
 | GitHub/Copilot credentials in service-owned WSL | Unattended repository access, optional publication, and model access. These are not supplied by plant enrollment or inherited from the enrolling human. |
 
-The first version uses one Entra application/service principal per workbench. Its only application permission is the plant API's `Workbench.Connect` role. It receives no Cosmos DB, Blob Storage, Key Vault, Microsoft Graph, or Azure management permissions.
+Use one dedicated Entra application/service principal per provisioned enrollment. Its only application permission is the Factory API's `Workbench.Connect` role. It receives no Cosmos DB, Blob Storage, Key Vault, Microsoft Graph, or Azure management permissions. Upgrades retain it; retirement followed by fresh enrollment does not reactivate it.
 
-### One-Time Plant Preparation
+### One-Time Factory Preparation
 
-An authorized administrator provisions the web application/API and installer registrations described in RFC 002, consents their permissions, and configures who may create plants. A plant has an Entra user owner who can assign plant-scoped roles, including workbench registration. Azure resource deployment, directory administration, and plant ownership are distinct authorities.
+An authorized administrator provisions the web application/API and installer registrations described in RFC 002, consents their permissions, and explicitly assigns who may create plants and administer enrollments. Plant owners delegate plant-scoped roles for resource membership; they do not automatically become enrollment administrators. Azure resource deployment, directory administration, Factory enrollment administration and plant ownership are distinct authorities.
 
 Publish a trusted installation profile containing the service URL and expected tenant/API/client IDs. The installer may discover matching public metadata from the service, but must not silently trust a different tenant or audience returned by an arbitrary URL.
 
@@ -200,29 +239,31 @@ Grant the service's background provisioning identity the administrator-approved 
 ### Enrollment
 
 1. The installer confirms the destination and signs the human into the configured tenant using MSAL. Reuse the Windows account through supported broker authentication where available; otherwise use browser authorization-code flow with PKCE. Device-code flow is an explicit fallback where tenant policy allows it. Conditional Access failures remain errors, not reasons to weaken policy.
-2. List the plants accessible to that user and select a target where the user has owner or `Workbench.Registrar` authority. A valid tenant sign-in or plant read access alone does not permit registration; users without registration authority cannot submit an enrollment request.
+2. Verify delegated `Plant.Access`, `Factory.User` and `Factory.EnrollmentAdministrator` before creating a new local identity. Do not ask for a target plant; a valid tenant sign-in or plant ownership/read/registrar access alone does not permit enrollment.
 3. Use authorized local setup/service tooling to create a non-exportable RSA certificate in the Windows LocalMachine certificate store, using the Windows key provider. Restrict private-key access to the dedicated service identity and authorized credential-management tooling, not the enrolling user's session. Proposed validity is 180 days. This is a client credential, not a TLS server certificate; only the public certificate leaves the machine.
-4. Obtain a short-lived server challenge. Submit the plant, chosen device name, installation identifier, public certificate, advertised capabilities, and a signature binding the challenge to the enrollment request. The server verifies possession, expiry, requester authority, and replay protection.
-5. After verifying the user's plant-scoped registration authority, commit an enrollment operation and return `202 Accepted` with its identifier and status URL. The user's explicit submission authorizes enrollment; the asynchronous operation waits for provisioning, not a second person's approval.
-6. A service-owned background worker takes an ETag-guarded reservation on an authorized operation. Using its own identity, it creates or resumes the dedicated Entra application/service principal, uploads the public certificate, and assigns `Workbench.Connect` on the plant API. It records directory IDs and progress against the operation; uncertain Graph responses require reconciliation, not another application or concurrent provisioner.
-7. The service finalizes the binding between plant, tenant, service-principal object ID, client ID, and server-assigned workbench ID. Recheck the enrolling user's current plant registration authority before provisioning and activation. Directory provisioning and Cosmos updates are not one transaction; intermediate states remain non-executable.
-8. The installer polls the same operation using the enrolling user's delegated sign-in. After an interruption, reuse the operation and local key rather than submitting again. The background work does not require the user's token or browser session to stay alive.
-9. The installer receives and persists the non-secret binding. The Windows host, running under the actual service identity, acquires an application token using its local certificate for `api://<plant-api-client-id>/.default`. The plant service validates the actual token identity against the approved record before activating the device.
-10. The host registers installed capabilities and versions. Setup verifies that the plant reports this exact workbench online, then discards its enrollment user-token session. Unattended readiness additionally requires the cold-boot checks above.
+4. Persist the operation ID/key and immutable draft, then obtain a short-lived server challenge. Submit the device name, installation identifier, public certificate and signature binding the challenge to that draft, without a plant ID. The server verifies possession, expiry, requester authority and replay protection. Capabilities are runtime reports, not authority to enroll.
+5. After verifying enrollment-administrator authority, commit the service-wide enrollment operation and return `202 Accepted` with its identifier and status URL. The user's explicit submission authorizes enrollment; the asynchronous operation waits for provisioning, not a second person's approval.
+6. A service-owned background worker takes an ETag-guarded reservation on an authorized operation. Using its own identity, it creates or resumes the dedicated Entra application/service principal, uploads the public certificate, and assigns `Workbench.Connect` on the Factory API. It records directory IDs and progress against the operation; uncertain Graph responses require reconciliation, not another application or concurrent provisioner.
+7. The service records the binding between enrollment, tenant, service-principal object ID, client ID and workbench ID, initially without a plant. Provisioning is authorized independently of plant membership. Directory provisioning and Cosmos updates are not one transaction; intermediate states remain non-executable.
+8. The installer polls the same operation using an authorized enrollment administrator's delegated sign-in. After an interruption, reuse the operation and local key rather than submitting a replacement operation. Background work does not require the user's token or browser session to stay alive.
+9. The installer receives and persists the non-secret binding. The Windows host, running under the actual service identity, acquires an application token using its local certificate for `api://<api-client-id>/.default`. The service validates the actual token identity against the approved record before activating the device.
+10. The host reports Factory presence. Guided installation verifies authentication/presence under the actual service identity, shows the device as enrolled and initially unassigned in Factory inventory, then discards its enrollment user-token session. Unattended readiness additionally requires the cold-boot checks above.
 
-Directory propagation is handled with bounded retries and useful status, not repeated provisioning. A denied or failed enrollment does not enable startup. The remaining request and key are shown explicitly for retry or approved removal.
+After installation, an enrollment administrator assigns the device through the website, with required plant authority. The host discovers that membership/version and reports plant capabilities/presence. Moving or unassigning changes membership, not enrollment or credentials.
 
-The normal path needs no operator script, directory administrator at the device, or copied Entra identifiers. Missing provisioning consent is a visible service configuration error, not a reason to grant directory privileges to the enrolling user. The installer reports enrollment authorization failures, provisioning retries, and activation outcomes. The website displays the resulting workbench inventory and status without registration or approval controls.
+Directory propagation is handled with bounded retries and useful status, not repeated provisioning. A denied or failed enrollment does not enable startup or complete the guided installation. Show the remaining request/key explicitly for retry or full uninstall under the removal contract above.
 
-The daemon authenticates independently after activation. Restarts reuse the established machine identity and plant binding, refresh capability registration, and resume presence reporting without another human sign-in or a new enrollment. It does not impersonate the enrolling user or inherit their broader permissions. Removing the user's plant role prevents future authorized enrollment actions but does not silently delete an already admitted workbench; device revocation is explicit.
+The normal path needs no operator script, directory administrator at the device, or copied Entra identifiers. Missing provisioning consent is a visible service configuration error, not a reason to grant directory privileges to the enrolling user. The installer reports enrollment authorization failures, provisioning retries and activation outcomes. The website manages membership/retirement; it does not approve a second enrollment request.
+
+The daemon authenticates independently after activation. Restarts reuse the established machine identity, discover current plant membership, refresh applicable registration, and resume presence without another human sign-in or a new enrollment. It does not impersonate the enrolling user or inherit their broader permissions. Removing a human's role affects their future authorized actions but does not silently delete an existing device; device revocation is explicit.
 
 ### Runtime, Rotation, and Revocation
 
 The host loads its certificate from the configured machine store by thumbprint and uses an explicit certificate credential. Token acquisition and renewal run under the service identity without human sign-in. It must not silently fall back to the operator's Azure CLI login or another environment credential. No account password, PFX password, private key, or bearer token belongs in configuration, assignment snapshots, logs, or shell history. Any required service-account secret must use a supported Windows-managed protection mechanism.
 
-Renewal begins 30 days before expiry. The daemon generates a replacement key locally and requests rotation with proof of both old and new key possession. The service's background provisioner adds the public credential to the existing application. Verify new-key possession and fresh application-token authentication before retiring the old credential; preserve the service-principal/workbench binding. An expired or lost key requires a plant-authorized user's recovery approval, not automatic identity recreation.
+Renewal begins 30 days before expiry. The daemon generates a replacement key locally and requests rotation with proof of both old and new key possession. The service's background provisioner adds the public credential to the existing application. Verify new-key possession and fresh application-token authentication before retiring the old credential; preserve the service-principal/workbench binding. An expired or lost key requires authorized enrollment-administrator recovery, not automatic identity recreation. Automatic rotation/recovery remains a requirement, not an implemented capability of MSI `0.1.3`.
 
-Revocation first disables admission in the plant record, so an already-issued token cannot continue to claim work. Background provisioning then removes the directory role/credential as appropriate. Revocation does not kill a disconnected process or undo a GitHub operation; cancellation and reconciliation remain separate.
+Retirement first revokes the authoritative Factory enrollment so an already-issued token cannot continue reporting or claim work in any plant. Background processing reconciles provisioning and removes only the tracked, owned directory identity. Retain the retired record/audit rather than erasing history. Revocation does not kill a disconnected process or undo a GitHub operation; cancellation and reconciliation remain separate. Uninstall can complete locally without proving that this remote transition occurred and must report that distinction.
 
 ### Repository and Model Credentials
 
@@ -254,10 +295,10 @@ Keep bounded local logs and an upload spool. Redact secrets and omit source/prom
 
 ## Completion Criteria
 
-- A prepared machine can be installed from one signed Windows package with an Installed Apps entry and uninstall support, without remembered terminal variables.
-- A plant owner or workbench registrar can enroll from the device without separate approval, directory privileges, or an operator script; users without registration authority are rejected.
+- A prepared machine completes one guided installation from a signed Windows package through authenticated enrollment and service-account connection, with an Installed Apps entry and no remembered terminal variables. Merely installing binaries is not the enrollment success condition.
+- An enrollment administrator can enroll from the device without separate approval, directory privileges or an operator script; tenant sign-in or plant ownership alone is rejected.
 - Enrollment, background Graph provisioning, and activation resume after interruption without duplicate identities or dependence on a continuing user session.
-- The website shows registered workbenches, capabilities, and status without workbench creation or enrollment approval controls.
+- The device appears in service-wide inventory initially unassigned. The website can assign, move, unassign and retire it under the appropriate permissions, without recreating identity on membership changes or adding a second enrollment-approval step.
 - A cold reboot with no user logon starts the Windows Service and its service-owned WSL environment, reuses the same workbench ID, certificate binding, and journals, and restores registration/presence without human sign-in.
 - Plant, repository, and Copilot credentials are available under the actual runtime identity after reboot; routine renewal and reconnection require no interactive credential cache.
 - Crash and network-outage recovery use bounded retries and preserve execution ownership; saved results are redelivered without task replay, and uncertain effects block new claims with an actionable fault.
@@ -266,9 +307,11 @@ Keep bounded local logs and an upload spool. Redact secrets and omit source/prom
 - An approved workload reaches a verified PR; refused permissions and missing tools fail before unsafe execution.
 - Two lines can use one workbench sequentially without mixing configuration, workspaces, or result attribution.
 - Changing supported line instructions, skills, tools, or model selection reconfigures new executions without reinstalling the client; an in-flight assignment retains its snapshot.
-- Configuration revision, upgrade, and rollback preserve identity, claims, and results; failed activation recovers a compatible selected release, and unresolved work prevents unsafe replacement or replay.
-- Uninstall removes only this installation's service and binaries while preserving identity/state by default; retirement and destructive purge require explicit authorization and do not claim remote success while offline.
-- Tests cover cold boot without logon, service-identity WSL/tool/credential access, service crash and intentional stop, wrong tenant/audience, unauthorized enrollment, unadmitted and revoked devices, expired certificates, credential rotation, service outage, interrupted upgrade/configuration, uninstall/reinstall, and interrupted publication.
+- Configuration revision, repair, upgrade and rollback preserve enrollment, credentials, membership, policy, claims and results; failed activation recovers a compatible selected release, and unresolved work prevents unsafe replacement or replay. No new enrollment sign-in is required for an ordinary upgrade.
+- An MSI major upgrade's internal removal of the old version never invokes retirement or full credential/state cleanup.
+- Deliberate uninstall removes all installation-owned local artifacts, including credentials/configuration/journals, without deleting shared resources. It attempts retirement before deleting its means of authentication and separately reports local cleanup and confirmed/pending/unconfirmed remote retirement.
+- Offline/rejected/lost-response retirement does not block otherwise safe local removal or falsely report revocation. An administrator can finish remote retirement through Factory without reinstalling the device. A fresh reinstall creates a new enrollment, initially unassigned.
+- Tests cover cold boot without logon, service-identity WSL/tool/credential access, service crash and intentional stop, wrong tenant/audience, unauthorized enrollment, unadmitted and revoked devices, expired certificates, credential rotation, service outage, interrupted upgrade/configuration, major-upgrade removal versus real uninstall, partial enrollment removal, offline/unauthorized/uncertain retirement, local cleanup failure, fresh reinstall and interrupted publication.
 
 ## References
 

@@ -1,29 +1,32 @@
 # Live Workbench Installation Test
 
-Last updated: November 13, 2026 (Pacific).
+Last updated: November 14, 2026 (Pacific).
 
-**Status: service deployed; MSI 0.1.3 available for the first installation test.** Do not install MSI `0.1.2`: it predates enrollment inventory and removal. The new global API/UI is deployed and the approved operator has the dedicated administrator role. The replacement unsigned MSI passed static inspection. **No machine installation, enrollment, certificate cleanup or reboot acceptance has passed.**
+**Status: unsigned MSI 0.1.4 built; matching service deployment and native acceptance pending.** The global enrollment API/UI is deployed and the approved operator has the dedicated administrator role, but the new device-self-retirement endpoint is not deployed. MSI `0.1.2`, `0.1.3` and the earlier `0.1.4` prototypes are superseded. **No machine installation, enrollment, certificate cleanup, upgrade or reboot acceptance has passed.**
+
+**Lifecycle gate:** MSI `0.1.4` implements the [RFC 001 contract](../rfcs/001-workbench-workloads-and-installation.md#agreed-install-upgrade-and-uninstall-contract): guided enrollment, identity-preserving upgrades and complete owned-local uninstall with best-effort remote retirement. It adds automatic MSI logs, protected setup diagnostics and export before removal. Approve/deploy the matching service package before live self-retirement acceptance. No deployment or shared-machine installation is authorized by this build.
 
 This document tracks the current `src\Factory` MSI and plant-service implementation, not the older Foundry connection process in [the rev1 runbook](installation.md).
 
 ## Goal and ownership
 
-Deliver an MSI that enrolls the tester's device into Factory inventory, initially unassigned. Assign it to the existing plant through the website, prove reconnect after reboot without human sign-in, and prove that unassign, retirement, local cleanup and re-enrollment are distinct, reversible where intended operations.
+Deliver an MSI that enrolls the tester's device into Factory inventory, initially unassigned. Assign it to the existing plant through the website, prove reconnect after reboot without human sign-in, preserve identity through upgrades, and prove full owned-local removal with a separately reported retirement outcome. Unassign, retirement and uninstall remain distinct operations.
 
 The assistant prepares the service-side enrollment changes, authentication configuration and MSI after approval. The tester runs the installer and performs the machine-side acceptance steps. A tenant administrator must approve the provisioning permissions below; the tester should not have to perform manual application registrations or copy authentication IDs.
 
-**Next action (tester):** copy the MSI below to the test machine. Sign out/in to renew application roles, enroll the device without choosing a plant, then use **Enrollments** on the website to assign it to the existing plant. Follow the acceptance table; report the first failure rather than deleting state or creating replacement identities.
+**Next action (operator):** obtain deployment approval, deploy the matching service package and verify health, browser authentication and the new route before releasing this candidate for live lifecycle acceptance. **Then the tester** copies the MSI below to an isolated test machine, renews operator sign-in and follows the acceptance table. Report the first failure rather than deleting state or creating replacement identities.
 
 ## Agreed device lifecycle
 
 | Action | Result |
 |---|---|
-| Enroll in setup | Create one device identity in service-wide inventory, initially unassigned. Requires `Factory.EnrollmentAdministrator`, not plant ownership alone. |
+| Install and complete guided setup | Create one device identity in service-wide inventory, initially unassigned, and verify actual service-account authentication. Requires `Factory.EnrollmentAdministrator`, not plant ownership alone. Software-phase completion alone is not enrollment success. |
 | Assign through Enrollments | Admit the device to one plant. Requires enrollment administration and plant registration authority. |
 | Move or unassign | Change membership, retaining certificate, device identity and enrollment. A move requires authority over both plants. Assignment versions reject old reports. |
 | Retire through Enrollments | Revoke all Factory/plant access, including for an offline device; asynchronously reconcile/delete only its owned dedicated directory objects. This is irreversible, not unassign. |
-| Unenroll and remove service in setup | Stop service, request/resume retirement, then remove owned local service, credential and binding only after confirmed retirement. Interrupted cleanup can resume. |
-| MSI uninstall | Remove software/service only, retaining enrollment, credentials and journals. Not retirement or a reset. |
+| Upgrade or repair | Refresh software/service while retaining identity, certificate, assignment, policy/configuration and recovery evidence. Preserve an intentional stop. Upgrade-internal removal must never retire or purge the device. |
+| MSI uninstall | Offer diagnostics export, stop/remove the service, make a bounded self-retirement attempt, then purge owned credentials, configuration, journals, setup logs and software. Unknown files/links or credential-removal failures remain visible local failures. Shared prerequisites and independently owned files are not deleted. |
+| Reinstall after successful full uninstall | Create a new installation/enrollment and credential, initially unassigned. Any unconfirmed old remote enrollment requires separate administrator follow-up. |
 
 Unassigned devices still report Factory presence but cannot report to a plant. Old plant inventory rows are historical memberships, not simultaneous assignments. Remote retirement cannot stop an offline process or erase its local state; no workload execution/cancellation exists in this increment.
 
@@ -37,12 +40,13 @@ Unassigned devices still report Factory presence but cannot report to a plant. O
 | Dedicated enrollment administrator | Assigned and read back | The tester explicitly approved the signed-in CLI account; only that principal received the new role. Existing role IDs, assignments and browser callbacks were preserved. Renew browser/installer sign-in. |
 | Authority to assign to the existing plant | Existing owner, with the new enrollment role | Assignment checks current plant ownership/plant-scoped registrar authority. Plant creation remains complete. |
 | Live workbench enrollment | Global implementation deployed | Deployment `458c6993-829f-4cee-a115-9dc7a5445c74` reached RuntimeSuccessful. Global API challenges anonymously with 401; old plant-bound enrollment route returns 404. Actual machine provisioning is not tested. |
-| Enrollment lifecycle source | Implemented; isolated checks | Global inventory/UI, unassigned presence, versioned membership, retirement and resumable local cleanup. Real Graph deletion, SCM and machine certificate/key cleanup remain untested. |
+| Enrollment lifecycle source | Implemented; focused checks | Guided setup, identity-preserving maintenance, exact-device self-retirement and full owned-local cleanup with distinct remote outcomes. 76 focused tests passed. Real Graph deletion, SCM and machine certificate/key cleanup remain untested. |
 | Dedicated production provisioning identity | Created and attached | `factory-prod-qm3qqqsg45-enroll`; client ID `985e52b1-364c-466c-8ef9-5edd00f12d4e`. The original data identity remains attached and selected for data/cookie access. |
 | API enrollment prerequisites | Configured | V2 access tokens, delegated `Plant.Access`, application-only `Workbench.Connect`; existing role IDs and browser callbacks preserved. Website health and sign-in challenge checked afterward. |
 | Public installer registration | Created and preauthorized | Client ID `c15ffcc4-7d09-4f5d-864f-9fcdec452f4e`; single-tenant public client, loopback callback, only the API's delegated `Plant.Access`, no credentials. |
 | Provisioner Graph grants | Assigned and verified | Read-back confirmed all three approved application permissions on the dedicated provisioning identity. |
-| Replacement MSI | Built and statically checked | `0.1.3`/`enrollment-inventory-001`; profile/manifest MSI hashes, embedded cabinet/helper and runtime payload hashes checked without installation. Unsigned; ICE intentionally skipped. |
+| Replacement MSI | Built and statically checked | `0.1.4` / `workbench-0.1.4-004`; x64, automatic logging, registry metadata, embedded helper and all 514 image files checked across two cabinets without installation. Unsigned; ICE intentionally skipped. |
+| Matching self-retirement service | Packaged, not deployed | Self-contained Linux x64 `0.1.4` ZIP below. Existing Graph grants suffice; the device receives no new administrator role. |
 | Actual installation, enrollment, service startup and reboot | Not tested | These are the acceptance steps, not completed milestones. |
 
 ### Target environment
@@ -77,6 +81,7 @@ Owner: assistant/operator, with tenant-administrator approval.
 - [x] Approve the exact enrollment-administrator principal; add/preserve the new role and assign it only as approved.
 - [x] Deploy the global enrollment/assignment/retirement implementation.
 - [x] Verify health, anonymous global API protection and browser challenge with the production tenant/callback. Original canonical settings hash, both identities, Key Vault selector and subnet were preserved; Easy Auth remains disabled.
+- [ ] Obtain explicit deployment approval for the `0.1.4` self-retirement service, deploy it, and verify health, browser authentication and route protection. This build did not deploy it.
 - [ ] Tester: renew operator sign-in and verify authenticated inventory and existing plant access. Automated CLI token acquisition did not complete and was stopped; no extra consent was granted. This is not a completed human login.
 - [ ] Tester: verify role enforcement with renewed sign-in; ownership alone must not authorize enrollment.
 
@@ -135,20 +140,25 @@ Owner: assistant/operator.
 - [x] Check that the packaged origin, tenant, API and installer registration match the deployed service.
 - [x] Record the replacement MSI path, version and SHA-256 checksum.
 - [x] Clearly identify the package as an **unsigned development test build**. Signing and production acceptance are not complete.
-- [x] Hand over the package for its first installation test after service deployment and approved role assignment. Human login and machine acceptance remain tester steps, not completed prerequisites disguised as evidence.
+- [x] Package the matching self-retirement service without deploying it.
+- [ ] Release the candidate for live lifecycle acceptance after approved service deployment and isolated-machine selection. Human login and machine acceptance remain tester steps, not completed prerequisites disguised as evidence.
 
 Build instructions: [Windows installer and registration](../src/Factory/README.md#windows-installer-and-registration).
 
 | Delivery item | Current value |
 |---|---|
-| Live test MSI path | `C:\repos\softwarePlant\src\Factory\artifacts\installer\enrollment-inventory-001\msi\Factory.Workbench.0.1.3.msi` |
-| Version / release | `0.1.3` / `enrollment-inventory-001` |
-| Size | 119,704,045 bytes |
-| SHA-256 | `59DC5492C21D7EEE26BB84502662486A53B159B1E4562F247F6A6628828FB46A` |
-| Production profile and payload checked | All five profile fields, MSI profile/manifest hash records, embedded cabinet/helper and runtime manifest hashes matched |
+| Candidate MSI path | `C:\repos\softwarePlant\src\Factory\artifacts\installer\lifecycle-014-004\msi\en-US\Factory.Workbench.0.1.4.msi` |
+| Version / runtime release | `0.1.4` / `workbench-0.1.4-004` |
+| Size | 170,925,721 bytes |
+| SHA-256 | `51AE6CFDEB6C222D313543B2A392A850CC5FB74D82FEF690FD4BAE517DA60BEF` |
+| Production profile and payload checked | Production profile retained; all 514 image file hashes, two embedded cabinets, helper hash, action sequencing/upgrade guards, x64 platform and automatic logging checked without MSI execution |
 | Signing / ICE validation | Unsigned development test build / skipped by shared-machine policy, not passed |
-| Superseded package | `0.1.2` / `enrollment-live-001` remains blocked; do not install |
-| Ready for the tester to run | **Yes, for the first unsigned development installation test on the tester-operated machine; installation/enrollment/removal/reboot remain unverified** |
+| Superseded packages | `0.1.2`, `0.1.3`, and `lifecycle-014-001` through `lifecycle-014-003`; do not use for this acceptance |
+| Matching service ZIP | `C:\repos\softwarePlant\src\Factory\artifacts\service\lifecycle-014-001\Factory.Plant.Service.zip` |
+| Service ZIP size / SHA-256 | 58,021,638 bytes / `BA75C84F3D7E8B56DC4438DED94E741B8B3AB6E6C0A89088AC3E4C25D61121BE` |
+| Ready for live lifecycle acceptance | **Pending approved deployment of the matching service and tester-operated machine acceptance. Without it, uninstall may report unconfirmed retirement; do not interpret local cleanup as revoked remote access.** |
+
+MSI verbose logging is automatic. Setup writes protected, bounded JSONL traces under `%ProgramData%\Factory\Workbench\logs`. Setup offers **Open setup logs**, **Open MSI log** and **Save diagnostics**; native MSI failure UI exposes logs even if setup never starts. The uninstall flow offers export before purging local setup logs. Exported diagnostics omit credentials/configuration and redact supported MSI credential fields; inspect before sharing. Explicit diagnostic exports and Windows-managed MSI/event logs survive uninstall.
 
 ### 3. Confirm the test-machine prerequisites
 
@@ -167,30 +177,36 @@ Run these only after the package is explicitly marked ready above.
 
 | Step | Required result | Status |
 |---|---|---|
-| Install the supplied MSI with elevation. | Installation completes and Factory Workbench Setup is available. | Not run |
-| Open setup and sign in. | The approved account passes the enrollment-administrator check. No plant selector or manual registration IDs are required. | Not run |
-| Enroll and start the workbench. | Provisioning completes; setup confirms service-account authentication and Factory presence while unassigned. | Not run |
+| Install the supplied MSI with elevation. | Software phase completes and launches mandatory guided setup; no optional enrollment checkbox. MSI verbose log exists. | Not run |
+| Complete the guided sign-in/enrollment. | The approved account passes the administrator check; provisioning completes and setup verifies actual service-account authentication and fresh unassigned Factory presence. No plant selector or manual registration IDs. Cancellation/failure is not enrollment success. | Not run |
+| Exercise failure diagnostics on the test machine. | Native MSI failure and enrollment/network failures expose logs; setup traces persist safely and exported ZIP excludes tokens, keys and configuration. | Not run |
 | Open Enrollments on the website. | The matching device is visible, unassigned, with fresh Factory presence. Plant ownership without the dedicated role does not expose administration. | Not run |
 | Assign it to the existing plant. | Matching workbench appears with fresh plant registration/presence; enrollment, Entra IDs and certificate do not change. | Not run |
 | Check the installed service. | It runs under its dedicated service account and can use its machine certificate. | Not run |
 | Restart the workbench service. | The same workbench reconnects without a new enrollment, certificate or human login. | Not run |
 | Reboot without an interactive sign-in. | The same service starts automatically and fresh presence returns at the plant. | Not run |
+| Upgrade an enrolled device, then repeat with it intentionally stopped. | Identity, certificate, assignment, policy/configuration and recovery evidence survive; running device reconnects, stopped device stays stopped. Upgrade removal never requests retirement. | Not run |
+| Interrupt/roll back maintenance on the test machine. | Recovery is explicit and identity is preserved; removal intent never restarts a retiring device. | Not run |
 | Unassign in Enrollments, then reassign. | Device stays connected to Factory; old plant access stops; reassignment retains identity and advances assignment version. | Not run |
-| Retire while the device is offline. | Access is revoked immediately; directory cleanup reaches `retired` or explicitly reports attention. Previously issued tokens cannot report afterward. | Not run |
-| Resume setup and choose Unenroll and remove service. | Confirmed retirement permits owned service/certificate/key/binding cleanup; interrupted cleanup resumes without deleting unrelated state. | Not run |
-| Re-enroll after completed cleanup. | Same installation can enroll with a new credential/dedicated identity, initially unassigned. Old enrollment stays retired. | Not run |
+| Uninstall while connected, exporting diagnostics first. | Local owned service, certificate/key, configuration, journals, setup logs and software are removed. UI/MSI log report remote retirement separately; accepted retirement reconciles without the removed device. Export remains available. | Not run |
+| Reinstall after completed cleanup. | New installation/enrollment and credential, initially unassigned. Old retirement is not reversed. | Not run |
+| Uninstall while offline or unable to authenticate. | Safe owned-local cleanup still completes, remote outcome is explicitly unconfirmed, and an administrator can retire the old enrollment through the website. No implied durable remote queue. | Not run |
+| Test interrupted cleanup and an unrelated file on the test machine. | Cleanup resumes from durable intent; credential failure/unknown files are visible, unrelated/shared artifacts are never silently purged, and the retiring service does not restart. | Not run |
+| Separately retire a device through Enrollments while offline. | Factory access is revoked before directory deletion, including for previously issued tokens. Local uninstall remains a separate operation. | Not run |
 
 Record results and correlation/enrollment IDs in ignored test artifacts. Do not put tokens, secrets, private keys or certificate exports in this document or source control.
 
-If enrollment reports `enrollment_disabled`, provisioning failure, `needsAttention` or `retirementNeedsAttention`, stop and investigate. Do not delete journals, create replacement identities to bypass a failure, weaken TLS validation or bypass authorization. Retirement failure retains revoked access and local credentials for recovery; only verified `retired` allows credential cleanup. Disabling new enrollment must not prevent existing-device retirement.
+If enrollment reports `enrollment_disabled`, provisioning failure, `needsAttention` or `retirementNeedsAttention`, stop and investigate. Do not delete journals, create replacement identities to bypass a failure, weaken TLS validation or bypass authorization. Disabling new enrollment must not prevent existing-device retirement.
+
+Uninstall reports remote outcomes separately: **confirmed** means retired; **pending** means accepted with access revoked and deletion pending; **attention** means revoked but server cleanup needs attention; **unconfirmed** proves neither revocation nor a queued request; **not-enrolled** means no enrollment was recorded locally, not that cloud inventory was searched. Local cleanup can complete after any bounded attempt. For unconfirmed/partial enrollment, preserve the diagnostic export and use administrator inventory/retirement to reconcile the old identity.
 
 ## What this test does not prove
 
 Connected means registration and presence work. The current runtime advertises `plant-connection` and remains `notReady` for workload execution.
 
-This test does not establish WSL/worker execution, product-line Copilot workloads, upgrade/rollback acceptance, production code signing, automatic certificate renewal or expired-key recovery. Machine certificates currently expire after 180 days; token renewal is automatic, certificate renewal is not.
+Even a successful connection test does not establish WSL/worker execution, product-line Copilot workloads, production code signing, automatic certificate renewal or expired-key recovery. Upgrade/rollback and cleanup require their own acceptance rows above. Machine certificates currently expire after 180 days; token renewal is automatic, certificate renewal is not.
 
-Uninstall is not a full reset: it removes local software/service but retains identity, certificate, binding and journals. Use the explicit retirement/unenrollment workflow for permanent removal, not state deletion as a troubleshooting shortcut. Native machine cleanup, actual directory deletion and reboot behavior are acceptance items, not results of isolated tests.
+MSI `0.1.4` deliberately resets owned local state on uninstall; this does not guarantee remote retirement. Shared prerequisites/WSL, independently owned files, Windows-managed logs and explicit diagnostic exports are not owned-local purge targets. Native machine cleanup, actual directory deletion and reboot behavior are acceptance items, not results of isolated tests.
 
 ## Reporting completion
 

@@ -70,7 +70,8 @@ public sealed partial class WorkbenchLifecycle
         await service.StopAsync(current, cancellationToken);
         var restored = journal.Original with
         {
-            OwnedReleases = journal.Original.OwnedReleases.Union(current.OwnedReleases, StringComparer.OrdinalIgnoreCase).ToArray()
+            OwnedReleases = journal.Original.OwnedReleases.Union(current.OwnedReleases, StringComparer.OrdinalIgnoreCase).ToArray(),
+            RunRequested = journal.Original.RunRequested && !File.Exists(Path.Combine(root, "removal-intent.json"))
         };
         using (LocalState.LockRuntime(root))
         {
@@ -78,7 +79,7 @@ public sealed partial class WorkbenchLifecycle
             await service.ConfigureAsync(root, restored, cancellationToken);
             LocalState.SaveInstallation(root, restored);
         }
-        if (restored.RunRequested)
+        if (restored.RunRequested && !File.Exists(Path.Combine(root, "removal-intent.json")))
             await service.StartAsync(restored, cancellationToken);
         File.Delete(InstallerJournal);
     }
@@ -101,7 +102,18 @@ public sealed partial class WorkbenchLifecycle
     {
         if (File.Exists(InstallerJournal))
         {
-            var existing = ReadInstaller(transaction);
+            var existing = LocalState.Read<InstallerMaintenance>(InstallerJournal);
+            ReadInstaller(existing.TransactionId);
+            if (existing.TransactionId != transaction && operation == "uninstall" &&
+                File.Exists(Path.Combine(root, "removal-intent.json")) &&
+                LocalState.Read<RemovalIntent>(Path.Combine(root, "removal-intent.json")).InstallationId == original.InstallationId &&
+                existing.Original.InstallationId == original.InstallationId &&
+                existing.Original.InstallDirectory == original.InstallDirectory)
+            {
+                LocalState.Write(InstallerJournal, new InstallerMaintenance(transaction, operation, original));
+                return;
+            }
+            ReadInstaller(transaction);
             if (existing.Operation != operation || existing.Original.InstallationId != original.InstallationId)
                 throw new InvalidDataException("Another installer transaction requires recovery.");
             return;

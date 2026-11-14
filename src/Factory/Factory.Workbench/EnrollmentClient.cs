@@ -12,10 +12,13 @@ namespace Factory.Workbench;
 public sealed record EnrollmentJournal(string SchemaVersion, string InstallationId, string? PlantId,
     string OperationId, string CertificateThumbprint, string MachineName, string? PublicCertificate = null);
 public sealed record UnenrollmentJournal(string SchemaVersion, EnrollmentJournal Enrollment, string State);
+public sealed record RemovalIntent(string SchemaVersion, string InstallationId, string? EnrollmentId,
+    string RemoteOutcome, bool CertificatesRemoved = false);
 
-public sealed class PlantConnectionException(HttpStatusCode status, string message) : IOException(message)
+public sealed class PlantConnectionException(HttpStatusCode status, string message, string? correlationId = null) : IOException(message)
 {
     public HttpStatusCode Status { get; } = status;
+    public string? CorrelationId { get; } = correlationId;
 }
 
 public static class BindingStore
@@ -51,6 +54,8 @@ public static class BindingStore
 
     public static void RequireEnrollmentAllowed(string root)
     {
+        if (File.Exists(Path.Combine(root, "removal-intent.json")))
+            throw new InvalidDataException("Full uninstall is incomplete. Resume MSI uninstall; identity recovery or upgrade cannot cancel removal.");
         if (Removal(root) is { State: not "completed" })
             throw new InvalidDataException("Unenrollment is incomplete. Resume Unenroll before starting or re-enrolling this workbench.");
     }
@@ -132,12 +137,16 @@ public sealed class PlantHttp(HttpClient http, Func<CancellationToken, Task<stri
                 if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                     authenticationRejected?.Invoke();
                 var correlation = "";
+                string? correlationId = null;
                 var detail = "";
                 if (response.Content.Headers.ContentType?.MediaType == "application/problem+json")
                 {
                     var problem = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
                     if (problem.TryGetProperty("correlationId", out var value))
-                        correlation = $" Correlation: {value.GetString()}.";
+                    {
+                        correlationId = value.GetString();
+                        correlation = $" Correlation: {correlationId}.";
+                    }
                     if (problem.TryGetProperty("detail", out var explanation) && explanation.ValueKind == JsonValueKind.String)
                     {
                         var text = explanation.GetString()!;
@@ -145,7 +154,8 @@ public sealed class PlantHttp(HttpClient http, Func<CancellationToken, Task<stri
                     }
                 }
                 throw new PlantConnectionException(response.StatusCode,
-                    $"Plant request failed (HTTP {(int)response.StatusCode}).{detail}{correlation} Check plant authority, enrollment configuration, and service logs.");
+                    $"Plant request failed (HTTP {(int)response.StatusCode}).{detail}{correlation} Check plant authority, enrollment configuration, and service logs.",
+                    correlationId);
             }
         }
         return response;
