@@ -2,9 +2,11 @@
 
 Last updated: November 14, 2026 (Pacific).
 
-**Status: unsigned MSI 0.1.4 built; matching service deployment and native acceptance pending.** The global enrollment API/UI is deployed and the approved operator has the dedicated administrator role, but the new device-self-retirement endpoint is not deployed. MSI `0.1.2`, `0.1.3` and the earlier `0.1.4` prototypes are superseded. **No machine installation, enrollment, certificate cleanup, upgrade or reboot acceptance has passed.**
+**Status: tester reports successful enrollment after the servicing-ACL and service recovery corrections.** MSI `0.1.4` / `workbench-0.1.4-007` is unchanged. The tester completed the guarded failed-state repair. `006` then passed state protection and all helper-file checks but rejected the first helper-directory write ACL. The supplied test-machine Program Files ACL contains TrustedInstaller's container-only inheritance: a privileged Windows servicing writer incorrectly classified as untrusted. An in-memory regression reproduced that rejection before the correction. `007` recognizes only that exact servicing SID alongside SYSTEM and Administrators; it grants no permissions and still rejects ordinary Users and unrelated service writers, including generic write/all masks. **Do not repeat the repair. Full machine lifecycle acceptance, including reboot, upgrade and cleanup, remains outstanding.** Packages through `lifecycle-014-006` are superseded.
 
-**Lifecycle gate:** MSI `0.1.4` implements the [RFC 001 contract](../rfcs/001-workbench-workloads-and-installation.md#agreed-install-upgrade-and-uninstall-contract): guided enrollment, identity-preserving upgrades and complete owned-local uninstall with best-effort remote retirement. It adds automatic MSI logs, protected setup diagnostics and export before removal. Approve/deploy the matching service package before live self-retirement acceptance. No deployment or shared-machine installation is authorized by this build.
+**Lifecycle gate:** MSI `0.1.4` implements the [RFC 001 contract](../rfcs/001-workbench-workloads-and-installation.md#agreed-install-upgrade-and-uninstall-contract): guided enrollment, identity-preserving upgrades and complete owned-local uninstall with best-effort remote retirement. It adds automatic MSI logs, protected setup diagnostics and export before removal. The matching service was subsequently deployed with explicit approval; route protection and browser challenge passed. Shared-machine installation remains unauthorized.
+
+**Enrollment blocker resolved (tester-reported):** guided setup reached signed enrollment, created the device application with the correct provisioner owner, then Graph returned 403 during service-principal creation. The three approved grants were verified. With explicit approval, the service-only correction removes the extra owner binding from principal creation and verifies ownership before proceeding; a fresh signed submission of the unchanged draft can now reconcile `needsAttention`. It checks existing principals first and verifies the recorded application/public certificate before another principal attempt; uncertain application creation is never repeated. Graph failures retain safe error codes/request IDs, not response messages or credentials. Deployment `a4d4ef1a-366c-49a9-8994-eb51bd8a795c` reached RuntimeSuccessful at 14:33 Pacific, preserving all settings, identities, networking, auth and grants. **Directory.Read.All was explicitly declined and was not granted. The tester then reported successful enrollment.** Reboot, assignment, maintenance and cleanup still require separate acceptance.
 
 This document tracks the current `src\Factory` MSI and plant-service implementation, not the older Foundry connection process in [the rev1 runbook](installation.md).
 
@@ -14,7 +16,7 @@ Deliver an MSI that enrolls the tester's device into Factory inventory, initiall
 
 The assistant prepares the service-side enrollment changes, authentication configuration and MSI after approval. The tester runs the installer and performs the machine-side acceptance steps. A tenant administrator must approve the provisioning permissions below; the tester should not have to perform manual application registrations or copy authentication IDs.
 
-**Next action (operator):** obtain deployment approval, deploy the matching service package and verify health, browser authentication and the new route before releasing this candidate for live lifecycle acceptance. **Then the tester** copies the MSI below to an isolated test machine, renews operator sign-in and follows the acceptance table. Report the first failure rather than deleting state or creating replacement identities.
+**Next action (tester):** copy the MSI below to an isolated Windows x64 test machine, run with administrator elevation, renew operator sign-in and follow the acceptance table. Service deployment is complete. Report the first failure rather than deleting state or creating replacement identities.
 
 ## Agreed device lifecycle
 
@@ -40,14 +42,15 @@ Unassigned devices still report Factory presence but cannot report to a plant. O
 | Dedicated enrollment administrator | Assigned and read back | The tester explicitly approved the signed-in CLI account; only that principal received the new role. Existing role IDs, assignments and browser callbacks were preserved. Renew browser/installer sign-in. |
 | Authority to assign to the existing plant | Existing owner, with the new enrollment role | Assignment checks current plant ownership/plant-scoped registrar authority. Plant creation remains complete. |
 | Live workbench enrollment | Global implementation deployed | Deployment `458c6993-829f-4cee-a115-9dc7a5445c74` reached RuntimeSuccessful. Global API challenges anonymously with 401; old plant-bound enrollment route returns 404. Actual machine provisioning is not tested. |
-| Enrollment lifecycle source | Implemented; focused checks | Guided setup, identity-preserving maintenance, exact-device self-retirement and full owned-local cleanup with distinct remote outcomes. 76 focused tests passed. Real Graph deletion, SCM and machine certificate/key cleanup remain untested. |
+| Enrollment lifecycle source | Implemented; focused checks | 100 focused tests passed, including inherited TrustedInstaller policy, minimal principal creation/ownership verification, signed same-operation recovery, uncertain-create protection and nonsecret Graph errors. Real Graph deletion, SCM and machine certificate/key cleanup remain untested. |
 | Dedicated production provisioning identity | Created and attached | `factory-prod-qm3qqqsg45-enroll`; client ID `985e52b1-364c-466c-8ef9-5edd00f12d4e`. The original data identity remains attached and selected for data/cookie access. |
 | API enrollment prerequisites | Configured | V2 access tokens, delegated `Plant.Access`, application-only `Workbench.Connect`; existing role IDs and browser callbacks preserved. Website health and sign-in challenge checked afterward. |
 | Public installer registration | Created and preauthorized | Client ID `c15ffcc4-7d09-4f5d-864f-9fcdec452f4e`; single-tenant public client, loopback callback, only the API's delegated `Plant.Access`, no credentials. |
 | Provisioner Graph grants | Assigned and verified | Read-back confirmed all three approved application permissions on the dedicated provisioning identity. |
-| Replacement MSI | Built and statically checked | `0.1.4` / `workbench-0.1.4-004`; x64, automatic logging, registry metadata, embedded helper and all 514 image files checked across two cabinets without installation. Unsigned; ICE intentionally skipped. |
-| Matching self-retirement service | Packaged, not deployed | Self-contained Linux x64 `0.1.4` ZIP below. Existing Graph grants suffice; the device receives no new administrator role. |
-| Actual installation, enrollment, service startup and reboot | Not tested | These are the acceptance steps, not completed milestones. |
+| Replacement MSI | Servicing-ACL correction built and statically checked | `0.1.4` / `workbench-0.1.4-007`; embedded/installed helper match and all 514 image files checked across two cabinets without installation. Production profile, runtime release, validation actions and logging match. Unsigned; ICE intentionally skipped. |
+| Matching lifecycle/recovery service | Deployed and protected-route checks passed | Latest deployment `a4d4ef1a-366c-49a9-8994-eb51bd8a795c` reached RuntimeSuccessful. Health 200, correct Entra authorization-code/PKCE challenge, inventory/submission/retire-self 401/Bearer; invalid-token submission 401. All 24 settings, both identities, Key Vault selector, subnet, route-all and three Graph grants preserved; Easy Auth remains disabled. Actual device retirement is not tested. |
+| Actual installation | `004`, `005` and `006` failed | The tester completed the guarded state repair before `006`. Its copied JSONL identifies `helper-directory-write-permissions` / `UnauthorizedAccessException` after successful file and directory-owner checks. The supplied Program Files ACL and red regression establish the TrustedInstaller writer-policy bug corrected in `007`; native acceptance of `007` remains pending. The original `004` trace did not capture its cause. |
+| Enrollment, service startup and reboot | Enrollment succeeded (tester-reported) | After the service correction, the tester reported successful enrollment. Service-account authentication/startup and reboot/reconnect evidence remain separate acceptance items. |
 
 ### Target environment
 
@@ -81,7 +84,7 @@ Owner: assistant/operator, with tenant-administrator approval.
 - [x] Approve the exact enrollment-administrator principal; add/preserve the new role and assign it only as approved.
 - [x] Deploy the global enrollment/assignment/retirement implementation.
 - [x] Verify health, anonymous global API protection and browser challenge with the production tenant/callback. Original canonical settings hash, both identities, Key Vault selector and subnet were preserved; Easy Auth remains disabled.
-- [ ] Obtain explicit deployment approval for the `0.1.4` self-retirement service, deploy it, and verify health, browser authentication and route protection. This build did not deploy it.
+- [x] Obtain explicit deployment approval for the `0.1.4` self-retirement service, deploy it, and verify health, browser authorization-code/PKCE challenge and route protection. Deployment `598de7cf-4d8c-4ecd-a54b-8fcf39e96eaa`; verified November 14, 2026 at 11:45 Pacific. No settings/identity/network/grant changes.
 - [ ] Tester: renew operator sign-in and verify authenticated inventory and existing plant access. Automated CLI token acquisition did not complete and was stopped; no extra consent was granted. This is not a completed human login.
 - [ ] Tester: verify role enforcement with renewed sign-in; ownership alone must not authorize enrollment.
 
@@ -141,24 +144,38 @@ Owner: assistant/operator.
 - [x] Record the replacement MSI path, version and SHA-256 checksum.
 - [x] Clearly identify the package as an **unsigned development test build**. Signing and production acceptance are not complete.
 - [x] Package the matching self-retirement service without deploying it.
-- [ ] Release the candidate for live lifecycle acceptance after approved service deployment and isolated-machine selection. Human login and machine acceptance remain tester steps, not completed prerequisites disguised as evidence.
+- [x] Release the candidate for tester-operated lifecycle acceptance after approved service deployment. The tester selects an isolated machine; human login and machine acceptance remain tester steps, not completed prerequisites disguised as evidence.
 
 Build instructions: [Windows installer and registration](../src/Factory/README.md#windows-installer-and-registration).
 
 | Delivery item | Current value |
 |---|---|
-| Candidate MSI path | `C:\repos\softwarePlant\src\Factory\artifacts\installer\lifecycle-014-004\msi\en-US\Factory.Workbench.0.1.4.msi` |
-| Version / runtime release | `0.1.4` / `workbench-0.1.4-004` |
-| Size | 170,925,721 bytes |
-| SHA-256 | `51AE6CFDEB6C222D313543B2A392A850CC5FB74D82FEF690FD4BAE517DA60BEF` |
-| Production profile and payload checked | Production profile retained; all 514 image file hashes, two embedded cabinets, helper hash, action sequencing/upgrade guards, x64 platform and automatic logging checked without MSI execution |
+| Candidate MSI path | `C:\repos\softwarePlant\src\Factory\artifacts\installer\lifecycle-014-007\msi\en-US\Factory.Workbench.0.1.4.msi` |
+| Version / runtime release | `0.1.4` / `workbench-0.1.4-007` |
+| Size | 170,933,913 bytes |
+| SHA-256 | `5336F166FECFEC54CAB9501C439909DEF71C8FAF5EE8E3A0EA4B4C070A6001D2` |
+| Production profile and payload checked | Production profile retained; all 514 image file hashes, two embedded cabinets, embedded/installed helper hash and automatic logging checked without MSI execution. MSI sequencing/security guards are unchanged from the previous inspected build. |
 | Signing / ICE validation | Unsigned development test build / skipped by shared-machine policy, not passed |
-| Superseded packages | `0.1.2`, `0.1.3`, and `lifecycle-014-001` through `lifecycle-014-003`; do not use for this acceptance |
-| Matching service ZIP | `C:\repos\softwarePlant\src\Factory\artifacts\service\lifecycle-014-001\Factory.Plant.Service.zip` |
-| Service ZIP size / SHA-256 | 58,021,638 bytes / `BA75C84F3D7E8B56DC4438DED94E741B8B3AB6E6C0A89088AC3E4C25D61121BE` |
-| Ready for live lifecycle acceptance | **Pending approved deployment of the matching service and tester-operated machine acceptance. Without it, uninstall may report unconfirmed retirement; do not interpret local cleanup as revoked remote access.** |
+| Superseded packages | `0.1.2`, `0.1.3`, and `lifecycle-014-001` through `lifecycle-014-006`; do not use for this acceptance |
+| Matching service ZIP | `C:\repos\softwarePlant\src\Factory\artifacts\service\lifecycle-014-002\Factory.Plant.Service.zip` |
+| Service ZIP size / SHA-256 | 58,023,156 bytes / `93BAD7611DFBB6A9F4D5D7B63DCDA384271A620A5A50AB58D1BC3312874353D7` |
+| Service deployment | `a4d4ef1a-366c-49a9-8994-eb51bd8a795c`, RuntimeSuccessful; verified November 14, 2026 at 14:33 Pacific. Safe evidence: `src\Factory\artifacts\service\lifecycle-014-002\deployment-result.json`. |
+| Ready for tester retry | **The specific `006` writer-policy failure was reproduced and corrected in `007`. State repair is already complete; no further permissions or repair script are needed. Unsigned; full native lifecycle acceptance remains unverified.** |
 
 MSI verbose logging is automatic. Setup writes protected, bounded JSONL traces under `%ProgramData%\Factory\Workbench\logs`. Setup offers **Open setup logs**, **Open MSI log** and **Save diagnostics**; native MSI failure UI exposes logs even if setup never starts. The uninstall flow offers export before purging local setup logs. Exported diagnostics omit credentials/configuration and redact supported MSI credential fields; inspect before sharing. Explicit diagnostic exports and Windows-managed MSI/event logs survive uninstall.
+
+Traces identify file/directory link, ACL-read, owner and write-permission failures with exception type/code, not secret-bearing exception messages. After an error, dismiss the MSI dialog and use **Open setup logs** on the failure screen. If no new validation trace exists, read the MSI's actual helper exit code: `40` startup, `41` state protection, `42` logging initialization, `43` helper validation. Never diagnose test-machine permissions by inspecting the development machine.
+
+### Completed failed-state repair
+
+The tester ran the guarded script supplied beside `006` in elevated 64-bit PowerShell, previewed it and confirmed the repair:
+
+```powershell
+.\Repair-WorkbenchDiagnosticState.ps1 -WhatIf
+.\Repair-WorkbenchDiagnosticState.ps1
+```
+
+The script reported successful permission repair without removing files, services, certificates or enrollments. The subsequent `006` trace confirms state protection and diagnostic initialization succeeded. **This repair is complete; do not repeat it for `007`.** The script preserves logs/locks and refuses other shared-parent contents, unknown files/links, configuration/enrollment, registered MSI installations or workbench services. Fresh machines do not require this repair script.
 
 ### 3. Confirm the test-machine prerequisites
 
@@ -177,8 +194,8 @@ Run these only after the package is explicitly marked ready above.
 
 | Step | Required result | Status |
 |---|---|---|
-| Install the supplied MSI with elevation. | Software phase completes and launches mandatory guided setup; no optional enrollment checkbox. MSI verbose log exists. | Not run |
-| Complete the guided sign-in/enrollment. | The approved account passes the administrator check; provisioning completes and setup verifies actual service-account authentication and fresh unassigned Factory presence. No plant selector or manual registration IDs. Cancellation/failure is not enrollment success. | Not run |
+| Install the supplied MSI with elevation. | Software phase completes and launches mandatory guided setup; no optional enrollment checkbox. MSI verbose log exists. | `004`/`005`/`006` failed; state repair completed; `007` pending |
+| Complete the guided sign-in/enrollment. | The approved account passes the administrator check; provisioning completes and setup verifies actual service-account authentication and fresh unassigned Factory presence. No plant selector or manual registration IDs. Cancellation/failure is not enrollment success. | Tester reported successful enrollment after service correction; account-authentication/presence evidence not separately captured |
 | Exercise failure diagnostics on the test machine. | Native MSI failure and enrollment/network failures expose logs; setup traces persist safely and exported ZIP excludes tokens, keys and configuration. | Not run |
 | Open Enrollments on the website. | The matching device is visible, unassigned, with fresh Factory presence. Plant ownership without the dedicated role does not expose administration. | Not run |
 | Assign it to the existing plant. | Matching workbench appears with fresh plant registration/presence; enrollment, Entra IDs and certificate do not change. | Not run |

@@ -39,7 +39,11 @@ public sealed class GraphDirectoryProvisioner : IDirectoryProvisioner, IDisposab
         this.settings = settings;
         this.api = api;
         this.credential = credential;
-        http = new(handler) { BaseAddress = new Uri("https://graph.microsoft.com/v1.0/"), Timeout = TimeSpan.FromSeconds(20) };
+        http = new(handler)
+        {
+            BaseAddress = new Uri("https://graph.microsoft.com/v1.0/"), Timeout = TimeSpan.FromSeconds(20),
+            MaxResponseContentBufferSize = 128 * 1024
+        };
     }
 
     private static TokenCredential CreateCredential(EnrollmentSettings settings, ApiSettings api) =>
@@ -103,10 +107,13 @@ public sealed class GraphDirectoryProvisioner : IDirectoryProvisioner, IDisposab
     {
         var result = await SendAsync(HttpMethod.Post, "servicePrincipals", new Dictionary<string, object>
         {
-            ["appId"] = clientId,
-            ["owners@odata.bind"] = new[] { $"https://graph.microsoft.com/v1.0/servicePrincipals/{settings.ProvisioningObjectId}" }
+            ["appId"] = clientId
         }, cancellationToken);
-        return new(Id(result, "id"));
+        var id = Id(result, "id");
+        if (Id(result, "appId") != clientId)
+            throw new DirectoryProvisioningException("Created principal does not match the authorized application.");
+        await RequireOwnerAsync("servicePrincipals", id, cancellationToken);
+        return new(id);
     }
 
     public async Task EnsureConnectRoleAsync(string principalId, CancellationToken cancellationToken)
@@ -177,8 +184,30 @@ public sealed class GraphDirectoryProvisioner : IDirectoryProvisioner, IDisposab
             request.Content = JsonContent.Create(body);
         using var response = await http.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException($"Directory provisioning returned HTTP {(int)response.StatusCode}; check consent, propagation, and provisioner ownership.",
+        {
+            var code = "not-returned";
+            try
+            {
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object &&
+                    error.TryGetProperty("code", out var value) && value.ValueKind == JsonValueKind.String &&
+                    value.GetString() is { Length: > 0 and <= 128 } candidate &&
+                    candidate.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-' or '.'))
+                    code = candidate;
+                else
+                    code = "invalid-error-envelope";
+            }
+            catch (JsonException)
+            {
+                code = "invalid-error-json";
+            }
+            var requestId = response.Headers.TryGetValues("request-id", out var identifiers) &&
+                Guid.TryParse(identifiers.FirstOrDefault(), out var id) ? id.ToString("D") : "not-returned";
+            throw new HttpRequestException(
+                $"Directory {method} {path.Split('?')[0]} returned HTTP {(int)response.StatusCode}; Graph code {code}; request-id {requestId}. Check consent and provisioner ownership.",
                 null, response.StatusCode);
+        }
         if (response.StatusCode == HttpStatusCode.NoContent)
             return JsonSerializer.SerializeToElement(new { });
         return await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);

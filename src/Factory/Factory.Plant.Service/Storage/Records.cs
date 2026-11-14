@@ -72,6 +72,7 @@ public sealed record EnrollmentRecord : StoreRecord
     public string? ServicePrincipalId { get; init; }
     public DateTimeOffset? ApplicationCreateStartedAt { get; init; }
     public DateTimeOffset? PrincipalCreateStartedAt { get; init; }
+    public bool PrincipalCreateRetryRequested { get; init; }
     public string? LeaseOwner { get; init; }
     public DateTimeOffset? LeaseUntil { get; init; }
     public DateTimeOffset? RetryAt { get; init; }

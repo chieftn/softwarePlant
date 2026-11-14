@@ -1,4 +1,6 @@
 using System.IO.Compression;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -18,6 +20,7 @@ public sealed class SetupDiagnostics
     private readonly string session = Guid.NewGuid().ToString("N");
     private readonly string version = typeof(SetupDiagnostics).Assembly.GetName().Version?.ToString() ?? "unknown";
     private bool suspended;
+    private bool published;
     public string DirectoryPath { get; }
     public string FilePath { get; }
 
@@ -26,6 +29,13 @@ public sealed class SetupDiagnostics
         DirectoryPath = Path.Combine(root, "logs");
         Directory.CreateDirectory(DirectoryPath);
         ValidateDirectory(DirectoryPath);
+        if (OperatingSystem.IsWindows())
+        {
+            var directory = new DirectoryInfo(DirectoryPath);
+            var acl = directory.GetAccessControl();
+            SetLogAccess(acl, directory: true);
+            directory.SetAccessControl(acl);
+        }
         FilePath = Path.Combine(DirectoryPath, $"setup-{session}.jsonl");
         foreach (var old in Directory.EnumerateFiles(DirectoryPath).OrderByDescending(File.GetLastWriteTimeUtc).Skip(31))
             File.Delete(old);
@@ -54,7 +64,43 @@ public sealed class SetupDiagnostics
         if (File.Exists(FilePath) && new FileInfo(FilePath).Length >= 256 * 1024)
             throw new IOException("Setup diagnostic log reached its size limit. Save diagnostics and restart setup.");
         File.AppendAllText(FilePath, line + Environment.NewLine, Encoding.UTF8);
+        if (!published && OperatingSystem.IsWindows())
+        {
+            var file = new FileInfo(FilePath);
+            var acl = file.GetAccessControl();
+            SetLogAccess(acl, directory: false);
+            file.SetAccessControl(acl);
+            published = true;
+        }
         Console.WriteLine("FACTORY_DIAGNOSTIC " + line);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void SetLogAccess(FileSystemSecurity acl, bool directory)
+    {
+        var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        using var identity = WindowsIdentity.GetCurrent();
+        var creator = acl.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+        acl.SetAccessRuleProtection(true, false);
+        foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+            Modify(AccessControlModification.RemoveSpecific, rule);
+        foreach (var principal in new[] { administrators, system })
+            Modify(AccessControlModification.Add, new FileSystemAccessRule(principal, FileSystemRights.FullControl,
+                directory ? InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit : InheritanceFlags.None,
+                PropagationFlags.None, AccessControlType.Allow));
+        if (creator is not null && creator == identity.User && creator != administrators && creator != system)
+            Modify(AccessControlModification.Add,
+                new FileSystemAccessRule(creator, FileSystemRights.FullControl, AccessControlType.Allow));
+        Modify(AccessControlModification.Add,
+            new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+                directory ? FileSystemRights.ReadAndExecute : FileSystemRights.Read, AccessControlType.Allow));
+
+        void Modify(AccessControlModification modification, FileSystemAccessRule rule)
+        {
+            if (!acl.ModifyAccessRule(modification, rule, out _))
+                throw new InvalidOperationException("Diagnostic access rules could not be established.");
+        }
     }
 
     public bool TryRecordFailure(string stage, string outcome, Exception? error = null)
@@ -65,6 +111,20 @@ public sealed class SetupDiagnostics
             Console.Error.WriteLine($"FACTORY_DIAGNOSTICS_UNAVAILABLE {loggingError.GetType().Name} {loggingError.HResult}");
             return false;
         }
+    }
+
+    public void RunStage(string stage, Action operation)
+    {
+        Record(stage, "started");
+        try { operation(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or
+            InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception or
+            System.Security.SecurityException)
+        {
+            TryRecordFailure(stage, "failed", error);
+            throw;
+        }
+        Record(stage, "completed");
     }
 
     public void Suspend() => suspended = true;

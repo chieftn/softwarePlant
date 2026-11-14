@@ -63,6 +63,26 @@ public sealed partial class EnrollmentOperations(IRecordStore store, PlantOperat
                 var previous = Records.Require<EnrollmentRecord>(existing.Record);
                 if (previous.Requester != caller.Principal || previous.Digest != Digest(draft))
                     throw ApiProblems.Conflict();
+                if (previous.State == "needsAttention")
+                {
+                    if (previous.LeaseUntil > clock.GetUtcNow())
+                        throw ApiProblems.Unavailable();
+                    var resumed = previous with
+                    {
+                        State = "provisioning", UpdatedAt = clock.GetUtcNow(), Error = null,
+                        Failures = 0, RetryAt = null, LeaseOwner = null, LeaseUntil = null,
+                        PrincipalCreateRetryRequested = previous.ApplicationObjectId is not null &&
+                            previous.ServicePrincipalId is null && previous.PrincipalCreateStartedAt is not null
+                    };
+                    if (!await store.CommitAsync(scope, [new(resumed, existing.ETag), new(new AuditRecord
+                    {
+                        Id = $"reconciliation-{Guid.NewGuid():N}", ScopeId = scope,
+                        Principal = caller.Principal, Action = "workbench.enrollment.reconciliation.authorized",
+                        RecordedAt = resumed.UpdatedAt
+                    })], cancellationToken))
+                        continue;
+                    return View(resumed);
+                }
                 return View(previous);
             }
             var operation = new EnrollmentRecord

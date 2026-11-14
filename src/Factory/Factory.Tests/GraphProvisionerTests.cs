@@ -12,6 +12,52 @@ namespace Factory.Tests;
 public sealed class GraphProvisionerTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PrincipalCreationUsesMinimalRequestAndVerifiesOwnershipBeforeReturning(bool wrongOwner)
+    {
+        var handler = new GraphHandler("AQID") { RejectOwnerBinding = true, WrongOwner = wrongOwner };
+        using var directory = Create(handler);
+        if (wrongOwner)
+            await Assert.ThrowsAsync<DirectoryProvisioningException>(() =>
+                directory.CreatePrincipalAsync(ApiTestApplication.DaemonClientId, CancellationToken.None));
+        else
+            Assert.Equal(GraphHandler.Principal,
+                (await directory.CreatePrincipalAsync(ApiTestApplication.DaemonClientId, CancellationToken.None)).ObjectId);
+        var body = Assert.Single(handler.Bodies).Body;
+        Assert.Equal(ApiTestApplication.DaemonClientId, body.GetProperty("appId").GetString());
+        Assert.False(body.TryGetProperty("owners@odata.bind", out _));
+        Assert.Empty(handler.Deleted);
+    }
+
+    [Fact]
+    public async Task GraphFailurePreservesStatusCodeAndRequestIdWithoutLoggingResponseSecrets()
+    {
+        var handler = new GraphHandler("AQID") { GraphFailure = true };
+        using var directory = Create(handler);
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            directory.CreatePrincipalAsync(ApiTestApplication.DaemonClientId, CancellationToken.None));
+        Assert.Equal(HttpStatusCode.Forbidden, error.StatusCode);
+        Assert.Contains("Authorization_RequestDenied", error.Message);
+        Assert.Contains(GraphHandler.RequestId, error.Message);
+        Assert.DoesNotContain("fixture-response-secret", error.ToString());
+        Assert.DoesNotContain("fixture-directory-token", error.ToString());
+    }
+
+    [Fact]
+    public async Task MalformedGraphErrorDoesNotReplaceForbiddenStatusOrExposeItsBody()
+    {
+        var handler = new GraphHandler("AQID") { GraphFailure = true, MalformedError = true };
+        using var directory = Create(handler);
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            directory.CreatePrincipalAsync(ApiTestApplication.DaemonClientId, CancellationToken.None));
+        Assert.Equal(HttpStatusCode.Forbidden, error.StatusCode);
+        Assert.Contains("invalid-error-json", error.Message);
+        Assert.Contains(GraphHandler.RequestId, error.Message);
+        Assert.DoesNotContain("fixture-response-secret", error.ToString());
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task RetirementChecksOwnershipAndApplicationIdentityBeforeDeleting(bool principal)
@@ -104,10 +150,14 @@ public sealed class GraphProvisionerTests
         public const string Principal = "60000000-0000-0000-0000-000000000003";
         public const string ApiPrincipal = "60000000-0000-0000-0000-000000000004";
         public const string ConnectRole = "60000000-0000-0000-0000-000000000005";
+        public const string RequestId = "60000000-0000-0000-0000-000000000006";
         public string PublicCertificate { get; } = certificate;
         public bool WrongOwner { get; init; }
         public bool WrongKey { get; init; }
         public bool Missing { get; init; }
+        public bool RejectOwnerBinding { get; init; }
+        public bool GraphFailure { get; init; }
+        public bool MalformedError { get; init; }
         public List<string> Deleted { get; } = [];
         public List<(string Path, JsonElement Body)> Bodies { get; } = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -126,8 +176,22 @@ public sealed class GraphProvisionerTests
             object body;
             if (request.Method == HttpMethod.Post)
             {
-                Bodies.Add((path, await request.Content!.ReadFromJsonAsync<JsonElement>(cancellationToken)));
-                body = new { id = Application, appId = ApiTestApplication.DaemonClientId };
+                var posted = await request.Content!.ReadFromJsonAsync<JsonElement>(cancellationToken);
+                Bodies.Add((path, posted));
+                if (GraphFailure || RejectOwnerBinding && posted.TryGetProperty("owners@odata.bind", out _))
+                {
+                    var failure = new HttpResponseMessage(HttpStatusCode.Forbidden)
+                    {
+                        Content = MalformedError ? new StringContent("fixture-response-secret") : JsonContent.Create(new { error = new
+                        {
+                            code = "Authorization_RequestDenied", message = "fixture-response-secret"
+                        } })
+                    };
+                    failure.Headers.Add("request-id", RequestId);
+                    return failure;
+                }
+                body = new { id = path == "/v1.0/servicePrincipals" ? Principal : Application,
+                    appId = ApiTestApplication.DaemonClientId };
             }
             else if (path.EndsWith("/owners", StringComparison.Ordinal))
                 body = new { value = new[] { new { id = WrongOwner ? Guid.NewGuid().ToString() : Owner } } };

@@ -85,13 +85,30 @@ public sealed partial class EnrollmentProcessor(IRecordStore store, EnrollmentOp
                     principal = await directory.CreatePrincipalAsync(operation.ClientId!, directoryBudget.Token);
                 }
                 else
+                {
                     principal = await directory.FindPrincipalAsync(operation.ClientId!, directoryBudget.Token);
+                    if (principal is null && operation.PrincipalCreateRetryRequested)
+                    {
+                        var marker = $"Factory Workbench {api.ClientId} {operation.Id}";
+                        var application = await directory.FindApplicationAsync(marker,
+                            operation.Draft.PublicCertificate, directoryBudget.Token);
+                        if (application?.ObjectId != operation.ApplicationObjectId ||
+                            application.ClientId != operation.ClientId)
+                            throw new DirectoryProvisioningException("Principal retry requires the same owned application and authorized public certificate.");
+                        // The signed retry authorizes another principal attempt for this existing appId, never another application.
+                        await Save(operation with
+                        {
+                            PrincipalCreateStartedAt = null, PrincipalCreateRetryRequested = false
+                        }, true);
+                        return;
+                    }
+                }
                 if (principal is null)
                 {
                     await Uncertain(operation.PrincipalCreateStartedAt!.Value);
                     return;
                 }
-                await Save(operation with { ServicePrincipalId = principal.ObjectId }, true);
+                await Save(operation with { ServicePrincipalId = principal.ObjectId, PrincipalCreateRetryRequested = false }, true);
                 return;
             }
             await directory.EnsureConnectRoleAsync(operation.ServicePrincipalId, directoryBudget.Token);

@@ -55,11 +55,20 @@ public sealed class TestDirectory : IDirectoryProvisioner
     public int Creates { get; private set; }
     public bool LoseCreateResponse { get; set; }
     public bool HideApplication { get; set; }
+    public int PrincipalCreates { get; private set; }
+    public int PrincipalForbiddenFailures { get; set; }
+    public bool RejectAfterPrincipalCreated { get; set; }
+    public bool RejectApplicationReconciliation { get; set; }
     public int DeleteFailures { get; set; }
     public int ApplicationsDeleted { get; private set; }
     public int PrincipalsDeleted { get; private set; }
     public Func<Task>? AfterApplicationCreated { get; set; }
-    public Task<DirectoryApplication?> FindApplicationAsync(string marker, string publicCertificate, CancellationToken cancellationToken) => Task.FromResult(HideApplication ? null : application);
+    public Task<DirectoryApplication?> FindApplicationAsync(string marker, string publicCertificate, CancellationToken cancellationToken)
+    {
+        if (RejectApplicationReconciliation)
+            throw new DirectoryProvisioningException("The application does not belong to this enrollment.");
+        return Task.FromResult(HideApplication ? null : application);
+    }
     public Task<DirectoryPrincipal?> FindPrincipalAsync(string clientId, CancellationToken cancellationToken) => Task.FromResult(principal);
     public async Task<DirectoryApplication> CreateApplicationAsync(string marker, string publicCertificate, CancellationToken cancellationToken)
     {
@@ -74,8 +83,16 @@ public sealed class TestDirectory : IDirectoryProvisioner
         }
         return application;
     }
-    public Task<DirectoryPrincipal> CreatePrincipalAsync(string clientId, CancellationToken cancellationToken) =>
-        Task.FromResult(principal = new(Creates == 1 ? ApiTestApplication.DaemonId : Guid.NewGuid().ToString("D")));
+    public Task<DirectoryPrincipal> CreatePrincipalAsync(string clientId, CancellationToken cancellationToken)
+    {
+        PrincipalCreates++;
+        if (PrincipalForbiddenFailures-- > 0)
+            throw new HttpRequestException("Simulated Graph permission rejection.", null, HttpStatusCode.Forbidden);
+        principal = new(Creates == 1 ? ApiTestApplication.DaemonId : Guid.NewGuid().ToString("D"));
+        if (RejectAfterPrincipalCreated)
+            throw new HttpRequestException("Simulated rejected post-create ownership check.", null, HttpStatusCode.Forbidden);
+        return Task.FromResult(principal);
+    }
     public Task EnsureConnectRoleAsync(string principalId, CancellationToken cancellationToken) => Task.CompletedTask;
     public Task DeletePrincipalAsync(string principalId, string clientId, CancellationToken cancellationToken)
     {
@@ -105,6 +122,89 @@ public sealed class TestDirectory : IDirectoryProvisioner
 
 public sealed class EnrollmentTests
 {
+    [Fact]
+    public async Task SignedRetryAdoptsReconciledPrincipalWithoutRepeatingItsCreation()
+    {
+        using var app = new EnrollmentTestApplication();
+        using var human = app.Human();
+        var plant = await Plant(human);
+        using var key = RSA.Create(2048);
+        var draft = Draft(key);
+        using var submitted = await Submit(human, plant, draft, key);
+        await app.AdvanceAsync(plant, draft.OperationId);
+        app.Directory.RejectAfterPrincipalCreated = true;
+        await app.AdvanceAsync(plant, draft.OperationId);
+        Assert.Equal("needsAttention", Assert.Single(app.Store.All<EnrollmentRecord>()).State);
+        using var retry = await Submit(human, plant, draft, key);
+        retry.EnsureSuccessStatusCode();
+        for (var i = 0; i < 2; i++)
+            await app.AdvanceAsync(plant, draft.OperationId);
+        var recovered = Assert.Single(app.Store.All<EnrollmentRecord>());
+        Assert.Equal("ready", recovered.State);
+        Assert.Equal(ApiTestApplication.DaemonId, recovered.ServicePrincipalId);
+        Assert.Equal(1, app.Directory.Creates);
+        Assert.Equal(1, app.Directory.PrincipalCreates);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SignedRetryReconcilesRejectedPrincipalCreationWithoutReplacingApplication(bool rejectReconciliation)
+    {
+        using var app = new EnrollmentTestApplication();
+        using var human = app.Human();
+        var plant = await Plant(human);
+        using var key = RSA.Create(2048);
+        var draft = Draft(key);
+        using var submitted = await Submit(human, plant, draft, key);
+        await app.AdvanceAsync(plant, draft.OperationId);
+        app.Directory.PrincipalForbiddenFailures = 1;
+        await app.AdvanceAsync(plant, draft.OperationId);
+        var failed = Assert.Single(app.Store.All<EnrollmentRecord>());
+        Assert.Equal("needsAttention", failed.State);
+        var application = failed.ApplicationObjectId;
+        var client = failed.ClientId;
+        app.Clock.Now += TimeSpan.FromMinutes(3);
+        app.Directory.RejectApplicationReconciliation = rejectReconciliation;
+        using var retry = await Submit(human, plant, draft, key);
+        Assert.Equal("provisioning", (await retry.Content.ReadFromJsonAsync<EnrollmentView>())!.State);
+        for (var i = 0; i < 4; i++)
+            await app.AdvanceAsync(plant, draft.OperationId);
+        var recovered = Assert.Single(app.Store.All<EnrollmentRecord>());
+        Assert.Equal(rejectReconciliation ? "needsAttention" : "ready", recovered.State);
+        Assert.Equal(application, recovered.ApplicationObjectId);
+        Assert.Equal(client, recovered.ClientId);
+        Assert.Equal(draft.OperationId, recovered.Id);
+        Assert.Equal(draft.PublicCertificate, recovered.Draft.PublicCertificate);
+        Assert.Equal(1, app.Directory.Creates);
+        Assert.Equal(rejectReconciliation ? 1 : 2, app.Directory.PrincipalCreates);
+    }
+
+    [Fact]
+    public async Task SignedRetryDoesNotRepeatUncertainApplicationCreationOrAcceptChangedDraft()
+    {
+        using var app = new EnrollmentTestApplication();
+        using var human = app.Human();
+        var plant = await Plant(human);
+        using var key = RSA.Create(2048);
+        var draft = Draft(key);
+        app.Directory.LoseCreateResponse = true;
+        app.Directory.HideApplication = true;
+        using var submitted = await Submit(human, plant, draft, key);
+        await app.AdvanceAsync(plant, draft.OperationId);
+        app.Clock.Now += TimeSpan.FromMinutes(3);
+        await app.AdvanceAsync(plant, draft.OperationId);
+        Assert.Equal("needsAttention", Assert.Single(app.Store.All<EnrollmentRecord>()).State);
+        using var changed = await Submit(human, plant, draft with { MachineName = "different" }, key);
+        Assert.Equal(HttpStatusCode.Conflict, changed.StatusCode);
+        using var retry = await Submit(human, plant, draft, key);
+        Assert.Equal("provisioning", (await retry.Content.ReadFromJsonAsync<EnrollmentView>())!.State);
+        await app.AdvanceAsync(plant, draft.OperationId);
+        Assert.Equal("needsAttention", Assert.Single(app.Store.All<EnrollmentRecord>()).State);
+        Assert.Equal(1, app.Directory.Creates);
+        Assert.Equal(0, app.Directory.PrincipalCreates);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

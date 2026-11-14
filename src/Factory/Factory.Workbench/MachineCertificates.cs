@@ -9,13 +9,18 @@ namespace Factory.Workbench;
 [SupportedOSPlatform("windows")]
 public static class MachineCertificates
 {
-    public static void ValidateInstallerExecutable(string executable)
+    private const string TrustedInstallerSid = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
+    public static void ValidateInstallerExecutable(string executable, SetupDiagnostics? diagnostics = null)
     {
         var programFiles = Path.TrimEndingDirectorySeparator(
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)) + Path.DirectorySeparatorChar;
         var path = Path.GetFullPath(executable);
-        if (!path.StartsWith(programFiles, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
-            throw new InvalidDataException("The privileged installer helper must be installed beneath protected Program Files.");
+        Check("helper-path", () =>
+        {
+            if (!path.StartsWith(programFiles, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
+                throw new InvalidDataException("The privileged installer helper must be installed beneath protected Program Files.");
+        });
         var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
         var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
         for (FileSystemInfo? item = new FileInfo(path); item is not null &&
@@ -23,20 +28,48 @@ public static class MachineCertificates
                 Path.TrimEndingDirectorySeparator(programFiles), StringComparison.OrdinalIgnoreCase);
             item = item is FileInfo file ? file.Directory : ((DirectoryInfo)item).Parent)
         {
-            if ((item.Attributes & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("The privileged installer helper must not traverse links.");
-            FileSystemSecurity acl = item is FileInfo fileInfo ? fileInfo.GetAccessControl() : ((DirectoryInfo)item).GetAccessControl();
-            if (acl.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner ||
-                owner != administrators && owner != system)
-                throw new UnauthorizedAccessException("Installer helper ownership must be Administrators or SYSTEM.");
-            var writes = FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles |
-                FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
-            foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
-                if (rule.AccessControlType == AccessControlType.Allow && (rule.PropagationFlags & PropagationFlags.InheritOnly) == 0 &&
-                    (rule.FileSystemRights & writes) != 0 && !rule.IdentityReference.Equals(administrators) &&
-                    !rule.IdentityReference.Equals(system))
-                    throw new UnauthorizedAccessException("The installer helper permits untrusted modification.");
+            var scope = item is FileInfo ? "helper-file" : "helper-directory";
+            Check($"{scope}-link", () =>
+            {
+                if ((item.Attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("The privileged installer helper must not traverse links.");
+            });
+            Check($"{scope}-acl", () =>
+            {
+                FileSystemSecurity acl = item is FileInfo fileInfo ? fileInfo.GetAccessControl() : ((DirectoryInfo)item).GetAccessControl();
+                Check($"{scope}-owner", () =>
+                {
+                    if (acl.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner ||
+                        owner != administrators && owner != system)
+                        throw new UnauthorizedAccessException("Installer helper ownership must be Administrators or SYSTEM.");
+                });
+                Check($"{scope}-write-permissions", () =>
+                {
+                    foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+                        if (HasUntrustedInstallerWrite(rule))
+                            throw new UnauthorizedAccessException("The installer helper permits untrusted modification.");
+                });
+            });
         }
+
+        void Check(string stage, Action operation)
+        {
+            if (diagnostics is null)
+                operation();
+            else
+                diagnostics.RunStage(stage, operation);
+        }
+    }
+
+    internal static bool HasUntrustedInstallerWrite(FileSystemAccessRule rule)
+    {
+        var writes = FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles |
+            FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership |
+            (FileSystemRights)0x10000000 | (FileSystemRights)0x40000000;
+        return rule.AccessControlType == AccessControlType.Allow &&
+            (rule.PropagationFlags & PropagationFlags.InheritOnly) == 0 &&
+            (rule.FileSystemRights & writes) != 0 &&
+            rule.IdentityReference.Value is not ("S-1-5-18" or "S-1-5-32-544" or TrustedInstallerSid);
     }
 
     public static void ProtectStateDirectory(string root, bool allowRemovalRecovery = false)
@@ -52,24 +85,17 @@ public static class MachineCertificates
         if (directory.FullName.TrimEnd(Path.DirectorySeparatorChar).Equals(
             boundary.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The state directory must not be a filesystem or shared-data root.");
+        var missing = new Stack<DirectoryInfo>();
         for (var current = directory; current is not null &&
             !current.FullName.TrimEnd(Path.DirectorySeparatorChar).Equals(boundary.TrimEnd(Path.DirectorySeparatorChar),
                 StringComparison.OrdinalIgnoreCase); current = current.Parent)
         {
             if (!current.Exists)
+            {
+                missing.Push(current);
                 continue;
-            if ((current.Attributes & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("State directories must not traverse filesystem links.");
-            var acl = current.GetAccessControl();
-            if (acl.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner ||
-                owner != administrators && owner != system && owner != identity.User)
-                throw new UnauthorizedAccessException("Existing state-directory ownership is not trusted. An administrator must reconcile it.");
-            var writes = FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles |
-                FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
-            foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
-                if (rule.AccessControlType == AccessControlType.Allow && (rule.PropagationFlags & PropagationFlags.InheritOnly) == 0 &&
-                    (rule.FileSystemRights & writes) != 0 && !Trusted((SecurityIdentifier)rule.IdentityReference))
-                    throw new UnauthorizedAccessException("Existing state directories allow untrusted writes. An administrator must reconcile them.");
+            }
+            ValidateAncestor(current);
         }
         if (directory.Exists)
         {
@@ -91,20 +117,50 @@ public static class MachineCertificates
             if (Directory.Exists(Path.Combine(root, "logs")))
                 SetupDiagnostics.ValidateDirectory(Path.Combine(root, "logs"));
         }
-        directory.Create();
-        var protectedAcl = new DirectorySecurity();
-        protectedAcl.SetAccessRuleProtection(true, false);
-        protectedAcl.SetOwner(administrators);
-        foreach (var principal in new[] { administrators, system })
-            protectedAcl.AddAccessRule(new FileSystemAccessRule(principal, FileSystemRights.FullControl,
-                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        var protectedAcl = CreateStateDirectoryAcl();
+        while (missing.TryPop(out var current))
+        {
+            protectedAcl.CreateDirectory(current.FullName);
+            current.Refresh();
+            ValidateAncestor(current);
+        }
+        directory.Refresh();
         foreach (FileSystemAccessRule rule in directory.GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier)))
             if (rule.IdentityReference.Value.StartsWith("S-1-5-80-", StringComparison.Ordinal) && rule.AccessControlType == AccessControlType.Allow)
                 protectedAcl.AddAccessRule(new FileSystemAccessRule(rule.IdentityReference, FileSystemRights.ReadAndExecute,
                     InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
         directory.SetAccessControl(protectedAcl);
 
+        void ValidateAncestor(DirectoryInfo current)
+        {
+            if ((current.Attributes & FileAttributes.ReparsePoint) != 0 || current.LinkTarget is not null)
+                throw new InvalidDataException("State directories must not traverse filesystem links.");
+            var acl = current.GetAccessControl();
+            if (acl.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner ||
+                owner != administrators && owner != system && owner != identity.User)
+                throw new UnauthorizedAccessException("Existing state-directory ownership is not trusted. An administrator must reconcile it.");
+            var writes = FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles |
+                FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+            foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+                if (rule.AccessControlType == AccessControlType.Allow && (rule.PropagationFlags & PropagationFlags.InheritOnly) == 0 &&
+                    (rule.FileSystemRights & writes) != 0 && !Trusted((SecurityIdentifier)rule.IdentityReference))
+                    throw new UnauthorizedAccessException("Existing state directories allow untrusted writes. An administrator must reconcile them.");
+        }
+
         bool Trusted(SecurityIdentifier principal) => principal == administrators || principal == system || principal == identity.User;
+    }
+
+    internal static DirectorySecurity CreateStateDirectoryAcl()
+    {
+        var acl = new DirectorySecurity();
+        acl.SetAccessRuleProtection(true, false);
+        acl.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+        foreach (var type in new[] { WellKnownSidType.BuiltinAdministratorsSid, WellKnownSidType.LocalSystemSid })
+            acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(type, null), FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+            FileSystemRights.ReadAndExecute, AccessControlType.Allow));
+        return acl;
     }
 
     public static void GrantServiceStateAccess(string root, WorkbenchInstallation installation)
@@ -113,12 +169,7 @@ public static class MachineCertificates
         var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
         var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
         var service = (SecurityIdentifier)new NTAccount(installation.ServiceAccount).Translate(typeof(SecurityIdentifier));
-        var acl = new DirectorySecurity();
-        acl.SetAccessRuleProtection(true, false);
-        acl.SetOwner(administrators);
-        foreach (var principal in new[] { administrators, system })
-            acl.AddAccessRule(new FileSystemAccessRule(principal, FileSystemRights.FullControl,
-                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        var acl = CreateStateDirectoryAcl();
         acl.AddAccessRule(new FileSystemAccessRule(service, FileSystemRights.ReadAndExecute,
             InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
         new DirectoryInfo(root).SetAccessControl(acl);

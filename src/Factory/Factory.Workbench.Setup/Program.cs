@@ -28,17 +28,18 @@ if (args.Length == 0 || args is ["--help"] or ["help"])
 }
 
 using var cancellation = new CancellationTokenSource();
-Console.CancelKeyPress += (_, signal) =>
-{
-    if (args[0] == "configure")
-        return;
-    signal.Cancel = true;
-    cancellation.Cancel();
-};
-
 SetupDiagnostics? diagnostics = null;
+var failureStage = "startup";
+var helperValidation = args[0] == "msi-validate-helper";
 try
 {
+    Console.CancelKeyPress += (_, signal) =>
+    {
+        if (args[0] == "configure")
+            return;
+        signal.Cancel = true;
+        cancellation.Cancel();
+    };
     if (!OperatingSystem.IsWindows() || RuntimeInformation.OSArchitecture != Architecture.X64)
         throw new PlatformNotSupportedException("Factory workbench setup requires Windows x64.");
     var command = args[0];
@@ -78,11 +79,6 @@ try
         await InstallerInteraction.OfferDiagnosticsAsync(options["--ui"], options["--log"], cancellation.Token);
         return 0;
     }
-    if (command == "msi-validate-helper")
-    {
-        MachineCertificates.ValidateInstallerExecutable(options["--ui"]);
-        return 0;
-    }
     if (command == "msi-removal-summary")
     {
         InstallerInteraction.ShowRemovalOutcome(options["--transaction"], options["--log"]);
@@ -110,9 +106,19 @@ try
     if (command == "uninstall" && root.Equals(ConfigurationStore.DefaultRoot, StringComparison.OrdinalIgnoreCase) &&
         Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\Software\Factory\WorkbenchInstaller", "InstallFolder", null) is not null)
         throw new InvalidDataException("This workbench is MSI-managed. Use Installed Apps or msiexec /x so MSI-owned software is removed too.");
-    MachineCertificates.ProtectStateDirectory(root, command is "uninstall" or "msi-prepare-uninstall" or "msi-commit" or "msi-retire");
+    failureStage = "state-protection";
+    MachineCertificates.ProtectStateDirectory(root, command is "uninstall" or "msi-prepare-uninstall" or "msi-commit" or
+        "msi-retire" or "msi-validate-helper");
+    failureStage = "diagnostics-initialization";
     diagnostics = new SetupDiagnostics(root);
     diagnostics.Record(command, "started");
+    if (command == "msi-validate-helper")
+    {
+        failureStage = "helper-validation";
+        MachineCertificates.ValidateInstallerExecutable(options["--ui"], diagnostics);
+        diagnostics.Record(command, "completed");
+        return 0;
+    }
     var lifecycle = new WorkbenchLifecycle(root, controller);
     var removal = new WorkbenchFullRemoval(root, controller, MachineCertificates.RemoveOwned, diagnostics);
     if (command.StartsWith("msi-", StringComparison.Ordinal))
@@ -203,9 +209,16 @@ catch (OperationCanceledException)
 }
 catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or
     JsonException or ContractValidationException or ArgumentException or InvalidOperationException or
-    PlatformNotSupportedException or Win32Exception or AggregateException or System.Security.Cryptography.CryptographicException)
+    PlatformNotSupportedException or Win32Exception or AggregateException or System.Security.Cryptography.CryptographicException or
+    System.Security.SecurityException)
 {
     diagnostics?.TryRecordFailure("setup", "failed", error);
-    Console.Error.WriteLine($"Workbench setup failed ({error.GetType().Name}, {error.HResult}). See protected setup diagnostics.");
-    return 1;
+    Console.Error.WriteLine($"Workbench setup failed at {failureStage} ({error.GetType().Name}, {error.HResult}).");
+    return helperValidation ? failureStage switch
+    {
+        "state-protection" => 41,
+        "diagnostics-initialization" => 42,
+        "helper-validation" => 43,
+        _ => 40
+    } : 1;
 }
