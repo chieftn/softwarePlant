@@ -1,0 +1,18 @@
+{
+  "profiles": {
+    "https": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "launchUrl": "plants",
+      "applicationUrl": "https://localhost:7443",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Factory__DataCredential": "ClientSecret",
+        "Factory__SupportedProtocolVersions__0": "1",
+        "Factory__SupportedAssignmentSchemaVersions__0": "1",
+        "Factory__Web__Enabled": "true",
+        "Factory__Web__PublicOrigin": "https://localhost:7443"
+      }
+    }
+  }
+}

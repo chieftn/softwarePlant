@@ -1,0 +1,55 @@
+@model EnrollmentsPage
+@{
+    ViewData["Title"] = "Enrollments";
+}
+<h1>Enrolled devices</h1>
+<p>Enrollment establishes a device identity in Factory, independently of any plant.
+    Assign a device to one plant, move it or unassign it without replacing its identity or certificate.
+    Assignment requires enrollment administration and registration authority over the source and destination plants.</p>
+<a class="button secondary" asp-action="Index">Refresh</a>
+@foreach (var enrollment in Model.Enrollments.Items)
+{
+    <section class="panel">
+        <h2>@enrollment.MachineName</h2>
+        <p>Enrollment <code>@enrollment.Id</code>; state <strong>@enrollment.State</strong>.</p>
+        <p>Plant: @(enrollment.PlantId ?? "Unassigned"). Assignment version: @enrollment.AssignmentVersion.</p>
+        <p>Last device contact (UTC): @(enrollment.LastSeenAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never").
+            Contact history does not imply current admission or execution readiness.</p>
+        @if (enrollment.Error is { } error)
+        {
+            <p role="alert">@error</p>
+        }
+        @if (enrollment.State is "ready" or "active")
+        {
+            <form asp-action="Assign" asp-route-operationId="@enrollment.Id" method="post">
+                <input type="hidden" name="expectedVersion" value="@enrollment.AssignmentVersion" />
+                <label>Plant
+                    <select name="plantId">
+                        <option value="" selected="@(enrollment.PlantId is null)">Unassigned</option>
+                        @foreach (var plant in Model.Plants)
+                        {
+                            <option value="@plant.Id" selected="@(enrollment.PlantId == plant.Id)">@plant.Name</option>
+                        }
+                    </select>
+                </label>
+                <button type="submit">Apply assignment</button>
+            </form>
+        }
+        @if (enrollment.State != "retired")
+        {
+            <form asp-action="Revoke" asp-route-operationId="@enrollment.Id" method="post">
+                <p>Retirement is different from unassignment: it revokes all access and retires the device's dedicated
+                    Entra identity, even when offline. It cannot stop or clean up an offline computer.</p>
+                <label><input type="checkbox" name="confirm" value="true" required /> I confirm irreversible retirement of this device.</label>
+                <button type="submit">Retire / retry retirement</button>
+            </form>
+        }
+    </section>
+}
+@if (Model.Enrollments.ContinuationToken is { } token)
+{
+    <nav class="pagination" aria-label="Enrollment pages">
+        <a asp-action="Index" asp-route-pageSize="@Context.Request.Query["pageSize"].FirstOrDefault()"
+           asp-route-continuationToken="@token">Next page</a>
+    </nav>
+}

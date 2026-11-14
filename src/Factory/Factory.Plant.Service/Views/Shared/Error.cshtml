@@ -1,0 +1,11 @@
+@model WebsiteError
+@{
+    ViewData["Title"] = "Request unavailable";
+}
+<section class="panel narrow">
+    <p class="eyebrow">Request @Model.Status</p>
+    <h1>We couldn't complete that request</h1>
+    <p role="alert">@Model.Detail</p>
+    <p class="muted">Reference: <code>@Model.CorrelationId</code></p>
+    <a href="/">Return to Factory</a>
+</section>

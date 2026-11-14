@@ -1,0 +1,24 @@
+@model PlantView
+@{
+    ViewData["Title"] = Model.Name;
+}
+<p><a href="/plants">Back to plants</a></p>
+<div class="page-heading">
+    <div><p class="eyebrow">Plant</p><h1>@Model.Name</h1></div>
+    <span class="badge">@Model.State</span>
+</div>
+<section class="panel">
+    <h2>Workbenches</h2>
+    <p>View this plant's workbench registrations and last reported presence. Scoped workbench access is checked separately.</p>
+    <a class="button" asp-controller="Workbenches" asp-action="Index" asp-route-plantId="@Model.Id">View workbenches</a>
+</section>
+<section class="panel">
+    <h2>Plant details</h2>
+    <dl>
+        <dt>Plant ID</dt><dd><code>@Model.Id</code></dd>
+        <dt>Owner tenant ID</dt><dd><code>@Model.Owner.TenantId</code></dd>
+        <dt>Owner object ID</dt><dd><code>@Model.Owner.ObjectId</code></dd>
+        <dt>Created (UTC)</dt><dd>@Model.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss")</dd>
+        <dt>Updated (UTC)</dt><dd>@Model.UpdatedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss")</dd>
+    </dl>
+</section>

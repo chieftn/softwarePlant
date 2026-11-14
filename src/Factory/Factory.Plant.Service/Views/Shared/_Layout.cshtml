@@ -1,0 +1,40 @@
+@inject Microsoft.Extensions.Options.IOptions<WebsiteSettings> Website
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] - Factory</title>
+    <link rel="stylesheet" href="~/site.css" asp-append-version="true" />
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+        <nav class="shell navigation" aria-label="Main navigation">
+            <a class="brand" href="/">Factory</a>
+            <a href="/plants">Plants</a>
+            @if (User.IsInRole(ApiCaller.EnrollmentAdministratorRole))
+            {
+                <a href="/enrollments">Enrollments</a>
+            }
+            <div class="account">
+                @if (User.Identity?.IsAuthenticated == true && Website.Value.Enabled)
+                {
+                    <span>@(User.Identity.Name ?? "Signed in")</span>
+                    <form action="/account/signout" method="post" asp-antiforgery="true">
+                        <button class="button secondary" type="submit">Sign out</button>
+                    </form>
+                }
+                else if (Website.Value.Enabled)
+                {
+                    <a class="button secondary" href="/account/signin">Sign in</a>
+                }
+            </div>
+        </nav>
+    </header>
+    <main id="content" class="shell">
+        @RenderBody()
+    </main>
+    <footer class="shell footer">Factory <span aria-hidden="true">&middot;</span> Plant operations</footer>
+</body>
+</html>

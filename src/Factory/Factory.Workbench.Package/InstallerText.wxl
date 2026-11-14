@@ -1,0 +1,4 @@
+<WixLocalization xmlns="http://wixtoolset.org/schemas/v4/wxl" Culture="en-US">
+  <String Id="ExitDialogTitle" Value="{\WixUI_Font_Bigger}Software operation finished" />
+  <String Id="ExitDialogDescription" Value="For install or repair, Finish continues to Factory enrollment and service verification. Software installation alone does not establish a connected enrollment. For uninstall, review the separately reported retirement outcome." />
+</WixLocalization>

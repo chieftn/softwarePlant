@@ -1,0 +1,35 @@
+@inject Microsoft.Extensions.Options.IOptions<WebsiteSettings> Website
+@{
+    ViewData["Title"] = "Home";
+}
+<section class="hero">
+    <p class="eyebrow">Software Factory</p>
+    <h1>A home for your plants.</h1>
+    <p class="lead">Create plants and see the workbenches registered with them.</p>
+    @if (Website.Value.Enabled)
+    {
+        <a class="button" href="/plants">View plants</a>
+    }
+    else
+    {
+        <div class="notice">
+            <h2>Browser sign-in is not configured</h2>
+            <p>The web host is running. Plant pages require Entra sign-in and configured backing services.</p>
+            <p>See <code>src\Factory\README.md</code> for local configuration. No sample identity or plant data is substituted.</p>
+        </div>
+    }
+</section>
+<div class="cards">
+    <section class="panel">
+        <h2>Plants</h2>
+        <p>Plants supply resources. Each plant has an owner and scoped access.</p>
+    </section>
+    <section class="panel">
+        <h2>Workbenches</h2>
+        <p>View admission, last contact and reported availability independently.</p>
+    </section>
+    <section class="panel">
+        <h2>One service</h2>
+        <p>The website and REST API use the same plant operations and resource permissions.</p>
+    </section>
+</div>

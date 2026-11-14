@@ -1,0 +1,17 @@
+<Project Sdk="WixToolset.Sdk/4.0.6">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName>Factory.Workbench.$(ProductVersion)</OutputName>
+    <DefineConstants>BuildRoot=$(BuildRoot);HelperPath=$(HelperPath);ProductVersion=$(ProductVersion)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="4.0.6" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.6" />
+    <Compile Include="$(GeneratedPayload)" />
+  </ItemGroup>
+  <Target Name="RequirePublishedPayload" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(BuildRoot)' == '' or '$(HelperPath)' == '' or '$(GeneratedPayload)' == '' or '$(ProductVersion)' == ''"
+           Text="Build with setup\Build-WorkbenchInstaller.ps1; a validated profile and published payload are required." />
+  </Target>
+</Project>

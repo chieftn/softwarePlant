@@ -1,5 +1,7 @@
 # Rev1 Installation and Connection Runbook
 
+For the current Factory MSI/enrollment path, use the [live workbench installation test working document](workbench-installation-test.md).
+
 This documents the installation process that established the first live workbench connection on November 12, 2026. It describes the current manual process, not the desired self-enrollment experience.
 
 The verified result is a Windows workbench registered as `boxone`, polling a Foundry-hosted coordinator. No coding assignment or PR was produced during this connection exercise. See [rev1 learnings](rev1-learnings.md) for the gaps and follow-up work.
