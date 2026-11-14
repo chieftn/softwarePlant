@@ -18,6 +18,7 @@ public static class WorkbenchRuntime
             throw new InvalidDataException("Configuration and installed machine identities do not match.");
         if (!diagnostic && !installation.RunRequested)
             return;
+        BindingStore.RequireEnrollmentAllowed(root);
         var status = new WorkbenchRuntimeStatus("1", installation.InstallationId, release, Environment.ProcessId,
             DateTimeOffset.UtcNow, "notReady", "Machine enrollment is incomplete. WSL is not started.");
         X509Certificate2? certificate = null;
@@ -28,6 +29,7 @@ public static class WorkbenchRuntime
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                BindingStore.RequireEnrollmentAllowed(root);
                 if (File.Exists(Path.Combine(root, "binding.json")))
                 {
                     if (!OperatingSystem.IsWindows())
@@ -44,7 +46,9 @@ public static class WorkbenchRuntime
                             connection = new(new PlantHttp(http, tokens.TokenAsync, tokens.RequestFreshToken), binding, release, root);
                         }
                         await connection.PublishAsync(cancellationToken);
-                        status = status with { PlantConnected = true, Reason = "Plant connected; presence is notReady. Worker execution is unavailable. WSL is not started." };
+                        status = status with { PlantConnected = true, Reason = connection.AssignedPlantId is null
+                            ? "Enrolled and connected to Factory; unassigned. Assign this device through the website. Execution is unavailable."
+                            : "Factory and assigned plant connected; presence is notReady. Execution and WSL are unavailable." };
                     }
                     catch (Exception error) when (error is HttpRequestException or IOException or MsalException or CryptographicException ||
                         error is TaskCanceledException && !cancellationToken.IsCancellationRequested)

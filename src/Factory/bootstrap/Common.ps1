@@ -119,6 +119,7 @@ function Merge-FactoryAppRoles {
     foreach ($definition in @(
         @{ value = 'Factory.User'; member = 'User'; description = 'Sign in to Factory.' },
         @{ value = 'Factory.PlantCreator'; member = 'User'; description = 'Create Factory plants.' },
+        @{ value = 'Factory.EnrollmentAdministrator'; member = 'User'; description = 'Enroll, assign and retire Factory devices.' },
         @{ value = 'Workbench.Connect'; member = 'Application'; description = 'Connect an admitted workbench.' }
     )) {
         $matches = @($roles | Where-Object value -EQ $definition.value)

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Factory.Contracts;
 
 public sealed record EnrollmentDraft
@@ -23,11 +25,25 @@ public sealed record EnrollmentDraft
 public sealed record EnrollmentChallengeRequest(EnrollmentDraft Draft);
 public sealed record EnrollmentChallenge(string SchemaVersion, string Challenge, DateTimeOffset ExpiresAt);
 public sealed record EnrollmentSubmission(EnrollmentDraft Draft, string Challenge, string Signature);
-public sealed record EnrollmentView(string SchemaVersion, string Id, string PlantId, string WorkbenchId,
-    string State, DateTimeOffset UpdatedAt, string? ClientId = null, string? ServicePrincipalId = null, string? Error = null);
-public sealed record WorkbenchBinding(string SchemaVersion, string InstallationId, string PlantId,
+public sealed record EnrollmentView(string SchemaVersion, string Id,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? PlantId, string WorkbenchId,
+    string State, DateTimeOffset UpdatedAt, string? ClientId = null, string? ServicePrincipalId = null, string? Error = null,
+    string? MachineName = null, long AssignmentVersion = 0, WorkbenchPresence? Presence = null, DateTimeOffset? LastSeenAt = null);
+public sealed record WorkbenchBinding(string SchemaVersion, string InstallationId, string? PlantId,
     string WorkbenchId, string TenantId, string ClientId, string ServicePrincipalId, string CertificateThumbprint,
     string EnrollmentId);
+public sealed record EnrollmentAssignment(string SchemaVersion, long ExpectedVersion, string? PlantId = null)
+{
+    public void Validate()
+    {
+        ContractValidation.Version(SchemaVersion);
+        ContractValidation.Require(ExpectedVersion is >= 0 and < long.MaxValue, "ExpectedVersion must be nonnegative and below Int64.MaxValue.");
+        ContractValidation.Require(PlantId is null || Guid.TryParseExact(PlantId, "D", out var id) && id != Guid.Empty,
+            "PlantId must be a nonempty UUID or omitted to unassign.");
+    }
+}
+public sealed record WorkbenchAssignment(string SchemaVersion, string EnrollmentId, string WorkbenchId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? PlantId, long Version);
 
 public sealed record WorkbenchInstallationProfile(string SchemaVersion, string PlantServiceUrl,
     string TenantId, string ApiClientId, string InstallerClientId)

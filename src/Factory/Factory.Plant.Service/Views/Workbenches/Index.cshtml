@@ -9,11 +9,12 @@
 </div>
 <p class="muted">Plant <code>@Model.PlantId</code>. Only workbenches within your current scope are shown.</p>
 <p class="muted">Contact becomes stale after 90 seconds without presence. Admission and reported availability are separate.</p>
+<p><a href="/enrollments">Assign enrolled devices or retire an enrollment</a> (enrollment administrator).</p>
 @if (Model.Workbenches.Items.Count == 0)
 {
     <section class="panel empty">
         <h2>No workbenches on this page</h2>
-        <p>No workbenches are visible here. Enrollment and admission are not available in this slice.</p>
+        <p>No workbenches are visible here. A partial enrollment may still appear under Manage enrollments.</p>
     </section>
 }
 else

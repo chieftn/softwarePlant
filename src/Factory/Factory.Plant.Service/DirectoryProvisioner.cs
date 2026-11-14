@@ -18,6 +18,8 @@ public interface IDirectoryProvisioner
     Task<DirectoryPrincipal?> FindPrincipalAsync(string clientId, CancellationToken cancellationToken);
     Task<DirectoryPrincipal> CreatePrincipalAsync(string clientId, CancellationToken cancellationToken);
     Task EnsureConnectRoleAsync(string principalId, CancellationToken cancellationToken);
+    Task DeletePrincipalAsync(string principalId, string clientId, CancellationToken cancellationToken);
+    Task DeleteApplicationAsync(string applicationId, string clientId, CancellationToken cancellationToken);
 }
 
 public sealed class GraphDirectoryProvisioner : IDirectoryProvisioner, IDisposable
@@ -129,6 +131,34 @@ public sealed class GraphDirectoryProvisioner : IDirectoryProvisioner, IDisposab
             return;
         await SendAsync(HttpMethod.Post, $"servicePrincipals/{principalId}/appRoleAssignments",
             new { principalId, resourceId, appRoleId = roleId }, cancellationToken);
+    }
+
+    public Task DeletePrincipalAsync(string principalId, string clientId, CancellationToken cancellationToken) =>
+        DeleteOwnedAsync("servicePrincipals", principalId, clientId, cancellationToken);
+
+    public Task DeleteApplicationAsync(string applicationId, string clientId, CancellationToken cancellationToken) =>
+        DeleteOwnedAsync("applications", applicationId, clientId, cancellationToken);
+
+    private async Task DeleteOwnedAsync(string kind, string objectId, string clientId, CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParseExact(objectId, "D", out var id) || id == Guid.Empty ||
+            !Guid.TryParseExact(clientId, "D", out var client) || client == Guid.Empty ||
+            clientId.Equals(api.ClientId, StringComparison.OrdinalIgnoreCase) ||
+            clientId.Equals(settings.InstallerClientId, StringComparison.OrdinalIgnoreCase) ||
+            clientId.Equals(settings.ProvisioningClientId, StringComparison.OrdinalIgnoreCase))
+            throw new DirectoryProvisioningException("Refusing to retire a shared or invalid directory identity.");
+        try
+        {
+            var existing = await SendAsync(HttpMethod.Get, $"{kind}/{objectId}?$select=id,appId", null, cancellationToken);
+            if (Id(existing, "id") != objectId || Id(existing, "appId") != clientId)
+                throw new DirectoryProvisioningException("Directory retirement identity does not match the recorded enrollment.");
+            await RequireOwnerAsync(kind, objectId, cancellationToken);
+            await SendAsync(HttpMethod.Delete, $"{kind}/{objectId}", null, cancellationToken);
+        }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
+        {
+            // A lost delete response is safe to retry; a missing object is already retired.
+        }
     }
 
     private async Task RequireOwnerAsync(string kind, string objectId, CancellationToken cancellationToken)

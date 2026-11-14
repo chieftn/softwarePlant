@@ -11,6 +11,41 @@ namespace Factory.Tests;
 
 public sealed class GraphProvisionerTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RetirementChecksOwnershipAndApplicationIdentityBeforeDeleting(bool principal)
+    {
+        var handler = new GraphHandler("AQID");
+        using var directory = Create(handler);
+        if (principal)
+            await directory.DeletePrincipalAsync(GraphHandler.Principal, ApiTestApplication.DaemonClientId, CancellationToken.None);
+        else
+            await directory.DeleteApplicationAsync(GraphHandler.Application, ApiTestApplication.DaemonClientId, CancellationToken.None);
+        Assert.Single(handler.Deleted);
+
+        var foreign = new GraphHandler("AQID") { WrongOwner = true };
+        using var foreignDirectory = Create(foreign);
+        await Assert.ThrowsAsync<DirectoryProvisioningException>(() =>
+            foreignDirectory.DeleteApplicationAsync(GraphHandler.Application, ApiTestApplication.DaemonClientId, CancellationToken.None));
+        Assert.Empty(foreign.Deleted);
+        await Assert.ThrowsAsync<DirectoryProvisioningException>(() =>
+            directory.DeleteApplicationAsync(GraphHandler.Application, Guid.NewGuid().ToString("D"), CancellationToken.None));
+        Assert.Single(handler.Deleted);
+    }
+
+    [Fact]
+    public async Task RetirementIsIdempotentForMissingObjectsAndRefusesTheSharedApiIdentity()
+    {
+        var handler = new GraphHandler("AQID") { Missing = true };
+        using var directory = Create(handler);
+        await directory.DeletePrincipalAsync(GraphHandler.Principal, ApiTestApplication.DaemonClientId, CancellationToken.None);
+        await directory.DeleteApplicationAsync(GraphHandler.Application, ApiTestApplication.DaemonClientId, CancellationToken.None);
+        Assert.Empty(handler.Deleted);
+        await Assert.ThrowsAsync<DirectoryProvisioningException>(() =>
+            directory.DeleteApplicationAsync(GraphHandler.Application, ApiTestApplication.Audience, CancellationToken.None));
+    }
+
     [Fact]
     public async Task DirectoryRequestsCarryOnlyPublicCredentialAndGrantOnlyTheConfiguredConnectRole()
     {
@@ -72,6 +107,8 @@ public sealed class GraphProvisionerTests
         public string PublicCertificate { get; } = certificate;
         public bool WrongOwner { get; init; }
         public bool WrongKey { get; init; }
+        public bool Missing { get; init; }
+        public List<string> Deleted { get; } = [];
         public List<(string Path, JsonElement Body)> Bodies { get; } = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -79,6 +116,13 @@ public sealed class GraphProvisionerTests
             Assert.Equal("graph.microsoft.com", request.RequestUri.Host);
             Assert.Equal("fixture-directory-token", request.Headers.Authorization?.Parameter);
             var path = request.RequestUri.AbsolutePath;
+            if (Missing)
+                return new(HttpStatusCode.NotFound);
+            if (request.Method == HttpMethod.Delete)
+            {
+                Deleted.Add(path);
+                return new(HttpStatusCode.NoContent);
+            }
             object body;
             if (request.Method == HttpMethod.Post)
             {
@@ -88,7 +132,10 @@ public sealed class GraphProvisionerTests
             else if (path.EndsWith("/owners", StringComparison.Ordinal))
                 body = new { value = new[] { new { id = WrongOwner ? Guid.NewGuid().ToString() : Owner } } };
             else if (path == $"/v1.0/applications/{Application}")
-                body = new { keyCredentials = new[] { new { key = WrongKey ? "BAUG" : PublicCertificate } } };
+                body = new { id = Application, appId = ApiTestApplication.DaemonClientId,
+                    keyCredentials = new[] { new { key = WrongKey ? "BAUG" : PublicCertificate } } };
+            else if (path == $"/v1.0/servicePrincipals/{Principal}")
+                body = new { id = Principal, appId = ApiTestApplication.DaemonClientId };
             else if (path == "/v1.0/applications")
                 body = new { value = new[] { new { id = Application, appId = ApiTestApplication.DaemonClientId } } };
             else if (path == "/v1.0/servicePrincipals")

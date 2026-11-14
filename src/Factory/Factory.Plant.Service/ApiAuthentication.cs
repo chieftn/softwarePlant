@@ -5,7 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace Factory.Plant.Service;
 
-public sealed record ApiCaller(EntraPrincipal Principal, string ClientId)
+public sealed record ApiCaller(EntraPrincipal Principal, string ClientId, bool EnrollmentAdministrator = false)
 {
     public string Key => $"{Principal.TenantId}:{Principal.ObjectId}";
 
@@ -18,7 +18,7 @@ public sealed record ApiCaller(EntraPrincipal Principal, string ClientId)
         caller = null;
         if (!TryReadPrincipal(user, out var principal) || !SingleGuid(user, "azp", out var client))
             return false;
-        caller = new(principal!, client);
+        caller = new(principal!, client, user.IsInRole(EnrollmentAdministratorRole));
         return true;
     }
 
@@ -39,6 +39,14 @@ public sealed record ApiCaller(EntraPrincipal Principal, string ClientId)
             return false;
         value = id.ToString("D");
         return true;
+    }
+
+    public const string EnrollmentAdministratorRole = "Factory.EnrollmentAdministrator";
+
+    public void RequireEnrollmentAdministrator()
+    {
+        if (!EnrollmentAdministrator)
+            throw ApiProblems.Forbidden();
     }
 }
 
@@ -91,6 +99,9 @@ public static class ApiAuthentication
             };
         });
         services.AddAuthorizationBuilder()
+            .AddPolicy("enrollment-admin", policy => policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
+                .RequireAuthenticatedUser().RequireAssertion(context =>
+                    Human(context.User) && context.User.IsInRole(ApiCaller.EnrollmentAdministratorRole)))
             .AddPolicy("human", policy => policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
                 .RequireAuthenticatedUser().RequireAssertion(context => Human(context.User)))
             .AddPolicy("creator", policy => policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)

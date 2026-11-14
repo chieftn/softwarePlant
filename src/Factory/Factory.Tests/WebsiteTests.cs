@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.RegularExpressions;
 using Factory.Contracts;
+using Factory.Plant.Service;
 using Factory.Plant.Service.Storage;
 using Microsoft.AspNetCore.WebUtilities;
 using Xunit;
@@ -10,6 +11,65 @@ namespace Factory.Tests;
 
 public sealed class WebsiteTests
 {
+    [Fact]
+    public async Task EnrollmentInventoryAssignsAndUnassignsThroughProtectedFormsWithoutReplacingIdentity()
+    {
+        using var app = new WebsiteTestApplication { EnableEnrollment = true };
+        using var owner = app.Human();
+        var (plant, _) = await CreateAsync(owner, "Assignment plant");
+        var id = Guid.NewGuid().ToString("D");
+        var installation = Guid.NewGuid().ToString("D");
+        var enrolled = new EnrollmentRecord
+        {
+            Id = id, ScopeId = Records.EnrollmentScope(id), State = "active", WorkbenchId = $"wb-{Guid.Parse(installation):N}",
+            Draft = new EnrollmentDraft
+            {
+                SchemaVersion = "1", OperationId = id, InstallationId = installation, MachineName = "Unassigned fixture",
+                PublicCertificate = "AQID"
+            },
+            Requester = new(ApiTestApplication.Tenant, ApiTestApplication.OwnerId), RequesterClientId = ApiTestApplication.Audience,
+            Digest = "fixture", UpdatedAt = app.Clock.Now, AuthorizedAt = app.Clock.Now,
+            ClientId = ApiTestApplication.DaemonClientId, ServicePrincipalId = ApiTestApplication.DaemonId
+        };
+        app.Store.Seed(enrolled);
+        using var admin = app.Browser();
+        using var adminSignIn = await app.SignInAsync(admin, roles:
+            ["Factory.User", "Factory.PlantCreator", ApiCaller.EnrollmentAdministratorRole]);
+        using var inventory = await admin.GetAsync("/enrollments");
+        Assert.Equal(HttpStatusCode.OK, inventory.StatusCode);
+        var html = await inventory.Content.ReadAsStringAsync();
+        Assert.Contains("Unassigned fixture", html);
+        var token = Hidden(html, "__RequestVerificationToken");
+        var route = $"/enrollments/{id}/assignment";
+        using var missingToken = await admin.PostAsync(route, new FormUrlEncodedContent(new Dictionary<string, string>
+            { ["plantId"] = plant.Id, ["expectedVersion"] = "0" }));
+        Assert.Equal(HttpStatusCode.BadRequest, missingToken.StatusCode);
+        var form = new Dictionary<string, string>
+        {
+            ["plantId"] = plant.Id, ["expectedVersion"] = "0", ["__RequestVerificationToken"] = token
+        };
+        using var assigned = await admin.PostAsync(route, new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.Redirect, assigned.StatusCode);
+        Assert.Equal(plant.Id, Assert.Single(app.Store.All<EnrollmentRecord>()).AssignedPlantId);
+        form["plantId"] = "";
+        form["expectedVersion"] = "1";
+        using var unassigned = await admin.PostAsync(route, new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.Redirect, unassigned.StatusCode);
+        var current = Assert.Single(app.Store.All<EnrollmentRecord>());
+        Assert.Null(current.AssignedPlantId);
+        Assert.Equal(enrolled.ClientId, current.ClientId);
+        Assert.Equal(enrolled.ServicePrincipalId, current.ServicePrincipalId);
+        using var ordinary = app.Browser();
+        using var ordinarySignIn = await app.SignInAsync(ordinary);
+        using var denied = await ordinary.GetAsync("/enrollments");
+        Assert.Equal(HttpStatusCode.Redirect, denied.StatusCode);
+        Assert.Contains("/account/access-denied", denied.Headers.Location!.OriginalString);
+        using var retired = await admin.PostAsync($"/enrollments/{id}/revoke",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["confirm"] = "true", ["__RequestVerificationToken"] = token }));
+        Assert.Equal(HttpStatusCode.Redirect, retired.StatusCode);
+        Assert.Equal("revoking", Assert.Single(app.Store.All<EnrollmentRecord>()).State);
+    }
+
     [Fact]
     public async Task BrowserSignInUsesPkceAndACanonicalCallbackWhileApiRemainsBearerOnly()
     {

@@ -9,6 +9,27 @@ namespace Factory.Tests;
 
 public sealed class WorkbenchApiTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task ReportsRejectNonpositiveAssignmentVersions(long version)
+    {
+        using var app = new ApiTestApplication();
+        using var owner = app.Human();
+        using var daemon = app.Daemon();
+        var (plant, _) = await CreateAsync(owner, "Plant");
+        app.Store.Seed(Workbench(app, plant.Id, "box-one"));
+        var path = $"/v1/plants/{plant.Id}/workbenches/box-one";
+        using var registration = await SendAsync(daemon, HttpMethod.Put, path + "/registration",
+            Registration() with { AssignmentVersion = version }, Key());
+        await ProblemAsync(registration, 400, "invalid_request");
+        using var presence = await SendAsync(daemon, HttpMethod.Put, path + "/presence",
+            Presence("notReady") with { AssignmentVersion = version }, Key());
+        await ProblemAsync(presence, 400, "invalid_request");
+        Assert.Empty(app.Store.All<RegistrationRecord>());
+        Assert.Empty(app.Store.All<PresenceRecord>());
+    }
+
     [Fact]
     public async Task RegistrationAndPresenceRequireTheExactActiveApplicationIdentity()
     {
@@ -166,7 +187,7 @@ public sealed class WorkbenchApiTests
         CreatedAt = app.Clock.Now
     };
 
-    private static WorkbenchRegistration Registration() => new()
+    internal static WorkbenchRegistration Registration() => new()
     {
         SchemaVersion = "1",
         MachineName = "observed-machine",

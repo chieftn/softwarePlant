@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Net;
+using System.Net.Http.Json;
 using Factory.Contracts;
 using Factory.Workbench;
 using Factory.Workbench.Host;
@@ -16,6 +18,89 @@ public sealed class WorkbenchLifecycleTests : IDisposable
     private string Root => Path.Combine(directory, "state");
     private string Binaries => Path.Combine(directory, "binaries");
     private WorkbenchLifecycle Lifecycle => new(Root, service);
+
+    [Fact]
+    public async Task RetirementFailureStopsTheServiceButPreservesCredentialsAndBlocksRestart()
+    {
+        await Install();
+        await Lifecycle.StartAsync(CancellationToken.None);
+        var journal = Enrollment();
+        var removed = false;
+        using var http = new HttpClient(new RetirementResponse(journal, "retirementNeedsAttention")) { BaseAddress = new("https://plant.example") };
+        var client = new EnrollmentClient(new PlantHttp(http, _ => Task.FromResult("fixture-token")));
+        var removal = new WorkbenchUnenrollment(Root, service, (_, _) => removed = true);
+        await Assert.ThrowsAsync<InvalidDataException>(() => removal.RunAsync(client, _ => { }, CancellationToken.None));
+        Assert.False(removed);
+        Assert.False(service.Running);
+        Assert.True(File.Exists(Path.Combine(Root, "binding.json")));
+        Assert.Equal(journal, BindingStore.ReadJournal(Root));
+        Assert.Equal("requested", BindingStore.Removal(Root)!.State);
+        await Assert.ThrowsAsync<InvalidDataException>(() => Lifecycle.StartAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(() => WorkbenchRuntime.RunAsync(Root, "first", true, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task VerifiedRetirementResumesFailedLocalCleanupOfflineThenAllowsFreshEnrollment()
+    {
+        await Install();
+        var journal = Enrollment();
+        var config = File.ReadAllText(Path.Combine(Root, "config.json"));
+        File.WriteAllText(Path.Combine(Root, "journal.json"), "retain audit evidence");
+        using var http = new HttpClient(new RetirementResponse(journal, "retired")) { BaseAddress = new("https://plant.example") };
+        var client = new EnrollmentClient(new PlantHttp(http, _ => Task.FromResult("fixture-token")));
+        var failures = 1;
+        var removed = false;
+        var removal = new WorkbenchUnenrollment(Root, service, (root, thumbprint) =>
+        {
+            Assert.Equal(Root, root);
+            Assert.Equal(journal.CertificateThumbprint, thumbprint);
+            if (failures-- > 0)
+                throw new IOException("Synthetic certificate cleanup interruption.");
+            removed = true;
+        });
+        await Assert.ThrowsAsync<IOException>(() => removal.RunAsync(client, _ => { }, CancellationToken.None));
+        Assert.Equal("retired", BindingStore.Removal(Root)!.State);
+        Assert.True(File.Exists(Path.Combine(Root, "binding.json")));
+        await removal.RunAsync(null, _ => { }, CancellationToken.None);
+        Assert.True(removed);
+        Assert.True(service.Removed);
+        Assert.Equal("uninstalled", LocalState.ReadInstallation(Root).State);
+        Assert.False(File.Exists(Path.Combine(Root, "binding.json")));
+        Assert.False(File.Exists(Path.Combine(Root, "enrollment.json")));
+        Assert.Equal("completed", BindingStore.Removal(Root)!.State);
+        Assert.Equal(config, File.ReadAllText(Path.Combine(Root, "config.json")));
+        Assert.Equal("retain audit evidence", File.ReadAllText(Path.Combine(Root, "journal.json")));
+        using var key = RSA.Create(2048);
+        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=Fresh enrollment fixture", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddDays(1));
+        var next = BindingStore.Journal(Root, certificate);
+        Assert.NotEqual(journal.OperationId, next.OperationId);
+        Assert.Equal(journal.InstallationId, next.InstallationId);
+        await Lifecycle.InstallAsync(Path.Combine(directory, "package-first"), Binaries, true, CancellationToken.None);
+    }
+
+    private EnrollmentJournal Enrollment()
+    {
+        var configuration = ConfigurationStore.Read(Root);
+        var journal = new EnrollmentJournal("1", configuration.InstallationId, null, Guid.NewGuid().ToString("D"),
+            new string('A', 40), "fixture-device", "AQID");
+        LocalState.Write(Path.Combine(Root, "enrollment.json"), journal);
+        LocalState.Write(Path.Combine(Root, "binding.json"), new WorkbenchBinding("1", configuration.InstallationId, null,
+            $"wb-{Guid.Parse(configuration.InstallationId):N}", configuration.TenantId,
+            Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), journal.CertificateThumbprint, journal.OperationId));
+        return journal;
+    }
+
+    private sealed class RetirementResponse(EnrollmentJournal journal, string state) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new EnrollmentView("1", journal.OperationId, null,
+                    $"wb-{Guid.Parse(journal.InstallationId):N}", state, DateTimeOffset.UtcNow))
+            });
+    }
 
     [Fact]
     public async Task RecoveryFinishesInstallerRemovalWithoutLeavingAStaleCommitThatCanRemoveAReinstall()

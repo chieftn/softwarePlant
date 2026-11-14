@@ -19,6 +19,7 @@ public static class WebsiteAuthentication
     public const string OidcScheme = "Factory.Web.Oidc";
     public const string UserPolicy = "web-user";
     public const string CreatorPolicy = "web-creator";
+    public const string EnrollmentAdministratorPolicy = "web-enrollment-admin";
 
     public static bool AddFactoryWebsite(this IServiceCollection services, IConfiguration configuration,
         IHostEnvironment environment, IDataProtectionBuilder protection)
@@ -71,6 +72,8 @@ public static class WebsiteAuthentication
                     ? JwtBearerDefaults.AuthenticationScheme : CookieScheme);
 
         services.AddAuthorizationBuilder()
+            .AddPolicy(EnrollmentAdministratorPolicy, policy => policy.AddAuthenticationSchemes(CookieScheme)
+                .RequireAuthenticatedUser().RequireRole("Factory.User").RequireRole(ApiCaller.EnrollmentAdministratorRole))
             .AddPolicy(UserPolicy, policy => policy.AddAuthenticationSchemes(CookieScheme)
                 .RequireAuthenticatedUser().RequireRole("Factory.User"))
             .AddPolicy(CreatorPolicy, policy => policy.AddAuthenticationSchemes(CookieScheme)
@@ -168,7 +171,7 @@ public static class WebsiteAuthentication
 
     public static ApiCaller Caller(ClaimsPrincipal user, ApiSettings settings) =>
         ValidUser(user, settings) && ApiCaller.TryReadPrincipal(user, out var principal)
-            ? new(principal!, settings.ClientId)
+            ? new(principal!, settings.ClientId, user.IsInRole(ApiCaller.EnrollmentAdministratorRole))
             : throw new InvalidOperationException("The browser session has no validated Entra user.");
 
     private static bool ValidUser(ClaimsPrincipal user, ApiSettings settings) =>

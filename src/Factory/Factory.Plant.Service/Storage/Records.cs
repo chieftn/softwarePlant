@@ -19,31 +19,36 @@ public abstract record StoreRecord
 {
     public required string Id { get; init; }
     public required string ScopeId { get; init; }
-    public required string PlantId { get; init; }
     public string SchemaVersion { get; init; } = "1";
 }
 
-public sealed record PlantRecord : StoreRecord
+public abstract record PlantScopedRecord : StoreRecord
+{
+    public required string PlantId { get; init; }
+}
+
+public sealed record PlantRecord : PlantScopedRecord
 {
     public required PlantView Plant { get; init; }
     public required string Revision { get; init; }
 }
 
-public sealed record OwnerRecord : StoreRecord
+public sealed record OwnerRecord : PlantScopedRecord
 {
     public required EntraPrincipal Principal { get; init; }
 }
 
-public sealed record AccessRecord : StoreRecord
+public sealed record AccessRecord : PlantScopedRecord
 {
     public required EntraPrincipal Principal { get; init; }
     public required string Role { get; init; }
     public string? WorkbenchId { get; init; }
 }
 
-public sealed record WorkbenchRecord : StoreRecord
+public sealed record WorkbenchRecord : PlantScopedRecord
 {
     public string? EnrollmentId { get; init; }
+    public long AssignmentVersion { get; init; }
     public required string Name { get; init; }
     public required EntraApplicationPrincipal Identity { get; init; }
     public required string AdmissionState { get; init; }
@@ -52,6 +57,8 @@ public sealed record WorkbenchRecord : StoreRecord
 
 public sealed record EnrollmentRecord : StoreRecord
 {
+    public string? AssignedPlantId { get; init; }
+    public long AssignmentVersion { get; init; }
     public required EnrollmentDraft Draft { get; init; }
     public required EntraPrincipal Requester { get; init; }
     public required string RequesterClientId { get; init; }
@@ -70,25 +77,32 @@ public sealed record EnrollmentRecord : StoreRecord
     public DateTimeOffset? RetryAt { get; init; }
     public string? Error { get; init; }
     public int Failures { get; init; }
+    public EntraPrincipal? RetirementRequester { get; init; }
 }
 public sealed record EnrollmentReservationRecord : StoreRecord
 {
     public required string EnrollmentId { get; init; }
 }
-public sealed record RegistrationRecord : StoreRecord
+public sealed record RegistrationRecord : PlantScopedRecord
 {
+    public string? EnrollmentId { get; init; }
+    public long AssignmentVersion { get; init; }
     public required WorkbenchRegistration Registration { get; init; }
     public required DateTimeOffset RecordedAt { get; init; }
 }
 
 public sealed record PresenceRecord : StoreRecord
 {
+    public string? PlantId { get; init; }
+    public string? EnrollmentId { get; init; }
+    public long AssignmentVersion { get; init; }
     public required WorkbenchPresence Presence { get; init; }
     public required DateTimeOffset RecordedAt { get; init; }
 }
 
 public sealed record OperationRecord : StoreRecord
 {
+    public string? PlantId { get; init; }
     public required string Digest { get; init; }
     public required DateTimeOffset RecordedAt { get; init; }
     public PlantView? Plant { get; init; }
@@ -97,6 +111,7 @@ public sealed record OperationRecord : StoreRecord
 
 public sealed record AuditRecord : StoreRecord
 {
+    public string? PlantId { get; init; }
     public required EntraPrincipal Principal { get; init; }
     public required string Action { get; init; }
     public required DateTimeOffset RecordedAt { get; init; }
@@ -125,7 +140,8 @@ public static class Records
 
     public static string PlantScope(string plantId) => $"plant:{plantId}:settings";
     public static string WorkbenchScope(string plantId, string workbenchId) => $"plant:{plantId}:workbench:{workbenchId}";
-    public static string EnrollmentScope(string plantId, string operationId) => $"plant:{plantId}:enrollment:{operationId}";
+    public static string EnrollmentScope(string operationId) => $"enrollment:{operationId}";
+    public static string InstallationScope(string installationId) => $"installation:{installationId}";
 
     public static T Require<T>(StoreRecord record) where T : StoreRecord =>
         record is T value && record.SchemaVersion == "1" ? value

@@ -13,6 +13,10 @@
         <nav class="shell navigation" aria-label="Main navigation">
             <a class="brand" href="/">Factory</a>
             <a href="/plants">Plants</a>
+            @if (User.IsInRole(ApiCaller.EnrollmentAdministratorRole))
+            {
+                <a href="/enrollments">Enrollments</a>
+            }
             <div class="account">
                 @if (User.Identity?.IsAuthenticated == true && Website.Value.Enabled)
                 {

@@ -6,14 +6,19 @@ using Factory.Plant.Service.Storage;
 
 namespace Factory.Plant.Service;
 
-public sealed class EnrollmentProcessor(IRecordStore store, EnrollmentOperations operations, PlantOperations plants,
+public sealed partial class EnrollmentProcessor(IRecordStore store, EnrollmentOperations operations,
     IDirectoryProvisioner directory, TimeProvider clock, ApiSettings api, ILogger<EnrollmentProcessor> logger)
 {
     private sealed class LeaseLostException : InvalidOperationException;
 
-    public async Task ProcessAsync(string plantId, string operationId, CancellationToken cancellationToken)
+    public async Task ProcessAsync(string operationId, CancellationToken cancellationToken)
     {
-        var stored = await operations.ReadAsync(plantId, operationId, cancellationToken);
+        var stored = await operations.ReadAsync(operationId, cancellationToken);
+        if (stored?.Record is EnrollmentRecord { State: "revoking" })
+        {
+            await RetireAsync(stored, cancellationToken);
+            return;
+        }
         if (stored?.Record is not EnrollmentRecord operation ||
             operation.State is not ("authorized" or "provisioning") ||
             operation.LeaseUntil > clock.GetUtcNow() || operation.RetryAt > clock.GetUtcNow())
@@ -22,34 +27,39 @@ public sealed class EnrollmentProcessor(IRecordStore store, EnrollmentOperations
         operation = operation with { State = "provisioning", LeaseOwner = owner, LeaseUntil = clock.GetUtcNow().AddMinutes(2) };
         if (!await store.CommitAsync(operation.ScopeId, [new(operation, stored.ETag)], cancellationToken))
             return;
-        stored = await operations.ReadAsync(plantId, operationId, cancellationToken)
+        stored = await operations.ReadAsync(operationId, cancellationToken)
             ?? throw new InvalidOperationException("Reserved enrollment disappeared.");
         operation = Records.Require<EnrollmentRecord>(stored.Record);
-        if (operation.LeaseOwner != owner)
+        if (operation.LeaseOwner != owner || operation.State != "provisioning")
             return;
         using var directoryBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         directoryBudget.CancelAfter(TimeSpan.FromSeconds(60));
         try
         {
-            await plants.RequireRegistrarAsync(plantId, new(operation.Requester, operation.RequesterClientId), cancellationToken);
-            var reservationScope = Records.WorkbenchScope(plantId, operation.WorkbenchId);
-            var admitted = await store.ReadAsync(reservationScope, operation.WorkbenchId, cancellationToken);
-            if (admitted is not null && (admitted.Record is not WorkbenchRecord previous || previous.EnrollmentId != operation.Id))
-                throw new DirectoryProvisioningException("This machine already has another admitted identity. Reconcile it before provisioning.");
+            var reservationScope = Records.InstallationScope(operation.Draft.InstallationId);
             var reservation = await store.ReadAsync(reservationScope, "enrollment", cancellationToken);
             if (reservation is null)
             {
                 if (!await store.CommitAsync(reservationScope, [new(new EnrollmentReservationRecord
                 {
-                    Id = "enrollment", ScopeId = reservationScope, PlantId = plantId, EnrollmentId = operation.Id
+                    Id = "enrollment", ScopeId = reservationScope, EnrollmentId = operation.Id
                 })], cancellationToken))
                     throw new LeaseLostException();
             }
-            else if (reservation.Record is not EnrollmentReservationRecord claim || claim.EnrollmentId != operation.Id)
-                throw new DirectoryProvisioningException("This machine already has another enrollment operation. Resume that operation instead.");
+            else if (reservation.Record is not EnrollmentReservationRecord claim)
+                throw new DirectoryProvisioningException("The machine enrollment reservation is inconsistent.");
+            else if (claim.EnrollmentId != operation.Id)
+            {
+                var previous = await operations.ReadAsync(claim.EnrollmentId, cancellationToken);
+                if (previous?.Record is not EnrollmentRecord { State: "retired" })
+                    throw new DirectoryProvisioningException("This machine already has another enrollment operation. Resume or retire that operation first.");
+                if (!await store.CommitAsync(reservationScope,
+                    [new(claim with { EnrollmentId = operation.Id }, reservation.ETag)], cancellationToken))
+                    throw new LeaseLostException();
+            }
             if (operation.ApplicationObjectId is null)
             {
-                var marker = $"Factory Workbench {operation.PlantId} {operation.Id}";
+                var marker = $"Factory Workbench {api.ClientId} {operation.Id}";
                 DirectoryApplication? application;
                 if (operation.ApplicationCreateStartedAt is null)
                 {
@@ -85,33 +95,11 @@ public sealed class EnrollmentProcessor(IRecordStore store, EnrollmentOperations
                 return;
             }
             await directory.EnsureConnectRoleAsync(operation.ServicePrincipalId, directoryBudget.Token);
-            await plants.RequireRegistrarAsync(plantId, new(operation.Requester, operation.RequesterClientId), cancellationToken);
-            var scope = Records.WorkbenchScope(plantId, operation.WorkbenchId);
-            var existing = await store.ReadAsync(scope, operation.WorkbenchId, cancellationToken);
-            var identity = new EntraApplicationPrincipal(api.TenantId, operation.ServicePrincipalId, operation.ClientId!);
-            if (existing is null)
-            {
-                var workbench = new WorkbenchRecord
-                {
-                    Id = operation.WorkbenchId, ScopeId = scope, PlantId = plantId, EnrollmentId = operation.Id,
-                    Name = operation.Draft.MachineName, Identity = identity,
-                    AdmissionState = "pending", CreatedAt = clock.GetUtcNow()
-                };
-                if (!await store.CommitAsync(scope, [new(workbench)], cancellationToken))
-                    throw new LeaseLostException();
-            }
-            else if (existing.Record is not WorkbenchRecord workbench || workbench.Identity != identity ||
-                workbench.EnrollmentId != operation.Id || workbench.AdmissionState is not ("pending" or "active"))
-                throw new DirectoryProvisioningException("Workbench binding conflicts with another enrollment or has been revoked.");
             await Save(operation with { State = "ready", Error = null }, true);
         }
         catch (LeaseLostException)
         {
             logger.LogWarning("Enrollment {Operation} lost its reservation; no further directory mutations were attempted.", operationId);
-        }
-        catch (ApiException error) when (error.Status is 403 or 404)
-        {
-            await Save(operation with { State = "failed", Error = "The enrolling user no longer has plant registration authority." }, true);
         }
         catch (ApiException error) when (error.Status == 400)
         {
@@ -159,9 +147,11 @@ public sealed class EnrollmentProcessor(IRecordStore store, EnrollmentOperations
             };
             if (!await store.CommitAsync(next.ScopeId, [new(next, stored.ETag)], cancellationToken))
                 throw new LeaseLostException();
-            stored = await operations.ReadAsync(plantId, operationId, cancellationToken)
+            stored = await operations.ReadAsync(operationId, cancellationToken)
                 ?? throw new InvalidOperationException("Enrollment checkpoint disappeared.");
             operation = Records.Require<EnrollmentRecord>(stored.Record);
+            if (!release && (operation.State != "provisioning" || operation.LeaseOwner != owner))
+                throw new LeaseLostException();
         }
     }
 }
@@ -171,7 +161,7 @@ public sealed class EnrollmentWorker(IServiceScopeFactory scopes, EnrollmentSett
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!settings.Enabled)
+        if (!settings.Enabled && !Guid.TryParse(settings.ProvisioningClientId, out _))
             return;
         string? after = null;
         while (!stoppingToken.IsCancellationRequested)
@@ -181,10 +171,13 @@ public sealed class EnrollmentWorker(IServiceScopeFactory scopes, EnrollmentSett
                 using var scope = scopes.CreateScope();
                 var store = scope.ServiceProvider.GetRequiredService<IRecordStore>();
                 var page = await store.QueryAsync(new("enrollment", 20, AfterId: after,
-                    States: ["authorized", "provisioning"]), stoppingToken);
-                var processor = scope.ServiceProvider.GetRequiredService<EnrollmentProcessor>();
-                foreach (var record in page)
-                    await processor.ProcessAsync(record.PlantId, record.Id, stoppingToken);
+                    States: settings.Enabled ? ["authorized", "provisioning", "revoking"] : ["revoking"]), stoppingToken);
+                if (page.Count > 0)
+                {
+                    var processor = scope.ServiceProvider.GetRequiredService<EnrollmentProcessor>();
+                    foreach (var record in page)
+                        await processor.ProcessAsync(record.Id, stoppingToken);
+                }
                 after = page.Count == 20 ? page[^1].Id : null;
             }
             catch (Exception error) when (error is Microsoft.Azure.Cosmos.CosmosException or InvalidOperationException or ApiException)

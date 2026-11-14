@@ -14,6 +14,7 @@
     <ProjectReference Include="..\Factory.Plant.Service\Factory.Plant.Service.csproj" />
     <ProjectReference Include="..\Factory.Workbench.Host\Factory.Workbench.Host.csproj" />
     <ProjectReference Include="..\Factory.Workbench.Setup\Factory.Workbench.Setup.csproj" />
+    <ProjectReference Include="..\Factory.Workbench\Factory.Workbench.csproj" />
     <None Include="..\api\openapi.yaml" Link="plant.openapi.yaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

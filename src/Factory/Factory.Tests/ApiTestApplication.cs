@@ -127,6 +127,7 @@ public sealed class TestRecordStore : IRecordStore
     public int ConflictsRemaining { get; set; }
     public bool FailWrites { get; set; }
     public int CommitAttempts { get; private set; }
+    public Func<IReadOnlyList<RecordWrite>, Task>? AfterCommit { get; set; }
 
     public void Seed(StoreRecord record)
     {
@@ -156,7 +157,7 @@ public sealed class TestRecordStore : IRecordStore
         lock (gate)
         {
             IReadOnlyList<StoreRecord> result = records.Values.Select(value => value.Record)
-                .Where(record => Type(record) == query.Type && (query.PlantId is null || record.PlantId == query.PlantId) &&
+                .Where(record => Type(record) == query.Type && (query.PlantId is null || record is PlantScopedRecord scoped && scoped.PlantId == query.PlantId) &&
                     (query.ScopeId is null || record.ScopeId == query.ScopeId) &&
                     (query.Principal is null || record is AccessRecord access && access.Principal == query.Principal) &&
                     (query.States is null || record is EnrollmentRecord enrollment && query.States.Contains(enrollment.State)) &&
@@ -166,7 +167,15 @@ public sealed class TestRecordStore : IRecordStore
         }
     }
 
-    public Task<bool> CommitAsync(string scopeId, IReadOnlyList<RecordWrite> writes, CancellationToken cancellationToken)
+    public async Task<bool> CommitAsync(string scopeId, IReadOnlyList<RecordWrite> writes, CancellationToken cancellationToken)
+    {
+        var committed = CommitCore(scopeId, writes, cancellationToken);
+        if (committed && AfterCommit is not null)
+            await AfterCommit(writes);
+        return committed;
+    }
+
+    private bool CommitCore(string scopeId, IReadOnlyList<RecordWrite> writes, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (gate)
@@ -177,7 +186,7 @@ public sealed class TestRecordStore : IRecordStore
             if (ConflictsRemaining > 0)
             {
                 ConflictsRemaining--;
-                return Task.FromResult(false);
+                return false;
             }
             if (writes.Any(write => write.Record.ScopeId != scopeId))
                 throw new InvalidOperationException("The test transaction crossed partitions.");
@@ -185,11 +194,11 @@ public sealed class TestRecordStore : IRecordStore
             {
                 var previous = records.GetValueOrDefault((scopeId, write.Record.Id));
                 if (write.ExpectedETag is null ? previous is not null : previous?.ETag != write.ExpectedETag)
-                    return Task.FromResult(false);
+                    return false;
             }
             foreach (var write in writes)
                 records[(scopeId, write.Record.Id)] = new(Clone(write.Record), $"\"{Guid.NewGuid():N}\"");
-            return Task.FromResult(true);
+            return true;
         }
     }
 

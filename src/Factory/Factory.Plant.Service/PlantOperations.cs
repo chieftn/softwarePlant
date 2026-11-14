@@ -161,7 +161,8 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
         var digest = Digest(request);
         for (var attempt = 0; attempt < Attempts; attempt++)
         {
-            await ActiveWorkbenchAsync(plantId, workbenchId, caller, cancellationToken);
+            var admission = await ActiveWorkbenchAsync(plantId, workbenchId, caller, request.AssignmentVersion, cancellationToken);
+            var workbench = Records.Require<WorkbenchRecord>(admission.Record);
             if (await ReplayAsync(scope, plantId, operationId, digest, cancellationToken) is not null)
                 return;
             if (!settings.SupportedProtocolVersions.Contains(request.ProtocolVersion, StringComparer.Ordinal) ||
@@ -171,9 +172,11 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
             var now = clock.GetUtcNow();
             if (await store.CommitAsync(scope,
             [
+                new(workbench, admission.ETag),
                 new(new RegistrationRecord
                 {
-                    Id = "registration", ScopeId = scope, PlantId = plantId, Registration = request, RecordedAt = now
+                    Id = "registration", ScopeId = scope, PlantId = plantId, Registration = request, RecordedAt = now,
+                    EnrollmentId = workbench.EnrollmentId, AssignmentVersion = workbench.AssignmentVersion
                 }, current?.ETag),
                 new(Receipt(scope, plantId, operationId, digest, now)),
                 new(Audit(scope, plantId, operationId, caller, "workbench.registered", now))
@@ -192,16 +195,21 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
         var digest = Digest(request);
         for (var attempt = 0; attempt < Attempts; attempt++)
         {
-            await ActiveWorkbenchAsync(plantId, workbenchId, caller, cancellationToken);
+            var admission = await ActiveWorkbenchAsync(plantId, workbenchId, caller, request.AssignmentVersion, cancellationToken);
+            var workbench = Records.Require<WorkbenchRecord>(admission.Record);
             if (await ReplayAsync(scope, plantId, operationId, digest, cancellationToken) is not null)
                 return;
-            if (await ReadAsync<RegistrationRecord>(scope, "registration", plantId, cancellationToken) is null)
+            var registration = await ReadAsync<RegistrationRecord>(scope, "registration", plantId, cancellationToken);
+            if (registration?.Record is not RegistrationRecord registered || registered.EnrollmentId != workbench.EnrollmentId ||
+                registered.AssignmentVersion != workbench.AssignmentVersion)
                 throw new ApiException(409, "workbench_not_registered", "Registration is required before reporting presence.");
             var current = await ReadAsync<PresenceRecord>(scope, "presence", plantId, cancellationToken);
             var now = clock.GetUtcNow();
             if (await store.CommitAsync(scope,
             [
-                new(new PresenceRecord { Id = "presence", ScopeId = scope, PlantId = plantId, Presence = request, RecordedAt = now }, current?.ETag),
+                new(workbench, admission.ETag),
+                new(new PresenceRecord { Id = "presence", ScopeId = scope, PlantId = plantId, Presence = request,
+                    RecordedAt = now, EnrollmentId = workbench.EnrollmentId, AssignmentVersion = workbench.AssignmentVersion }, current?.ETag),
                 new(Receipt(scope, plantId, operationId, digest, now))
             ], cancellationToken))
                 return;
@@ -209,7 +217,8 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
         throw ApiProblems.Unavailable();
     }
 
-    private async Task ActiveWorkbenchAsync(string plantId, string workbenchId, ApiCaller caller, CancellationToken cancellationToken)
+    private async Task<StoredRecord> ActiveWorkbenchAsync(string plantId, string workbenchId, ApiCaller caller,
+        long? assignmentVersion, CancellationToken cancellationToken)
     {
         var plant = Records.Require<PlantRecord>((await PlantAsync(plantId, cancellationToken)).Record);
         var current = await ReadAsync<WorkbenchRecord>(Records.WorkbenchScope(plantId, workbenchId), workbenchId, plantId, cancellationToken);
@@ -219,6 +228,15 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
         if (plant.Plant.State != "active" || workbench.AdmissionState != "active" ||
             workbench.Identity != new EntraApplicationPrincipal(caller.Principal.TenantId, caller.Principal.ObjectId, caller.ClientId))
             throw ApiProblems.Forbidden();
+        if (workbench.EnrollmentId is { } enrollmentId)
+        {
+            var enrollment = await EnrollmentAsync(enrollmentId, cancellationToken);
+            if (enrollment is not { State: "active" } || enrollment.AssignedPlantId != plantId ||
+                enrollment.AssignmentVersion != workbench.AssignmentVersion || assignmentVersion != enrollment.AssignmentVersion ||
+                enrollment.ClientId != caller.ClientId || enrollment.ServicePrincipalId != caller.Principal.ObjectId)
+                throw ApiProblems.Forbidden();
+        }
+        return current;
     }
 
     private async Task<WorkbenchView> ViewAsync(WorkbenchRecord workbench, CancellationToken cancellationToken)
@@ -227,15 +245,40 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
         var presence = await ReadAsync<PresenceRecord>(workbench.ScopeId, "presence", workbench.PlantId, cancellationToken);
         var registered = registration is null ? null : Records.Require<RegistrationRecord>(registration.Record);
         var observed = presence is null ? null : Records.Require<PresenceRecord>(presence.Record);
-        var contact = observed is null ? "unknown" :
+        if (registered?.EnrollmentId != workbench.EnrollmentId || registered?.AssignmentVersion != workbench.AssignmentVersion)
+            registered = null;
+        if (observed?.EnrollmentId != workbench.EnrollmentId || observed?.AssignmentVersion != workbench.AssignmentVersion)
+            observed = null;
+        EnrollmentRecord? enrollment = null;
+        if (workbench.EnrollmentId is { } enrollmentId)
+            enrollment = await EnrollmentAsync(enrollmentId, cancellationToken);
+        var revoked = workbench.AdmissionState == "revoked" ||
+            enrollment?.State is "revoking" or "retired" or "retirementNeedsAttention";
+        var unassigned = enrollment is not null && (enrollment.AssignedPlantId != workbench.PlantId ||
+            enrollment.AssignmentVersion != workbench.AssignmentVersion);
+        var contact = observed is null || revoked || unassigned ? "unknown" :
             clock.GetUtcNow() - observed.RecordedAt <= TimeSpan.FromSeconds(90) ? "online" : "stale";
-        return new("1", workbench.Id, workbench.PlantId, workbench.Name, workbench.Identity, workbench.AdmissionState,
-            contact, workbench.CreatedAt, registered?.Registration, registered?.RecordedAt, observed?.Presence, observed?.RecordedAt);
+        return new("1", workbench.Id, workbench.PlantId, workbench.Name, workbench.Identity,
+            revoked ? "revoked" : unassigned ? "unassigned" : workbench.AdmissionState, contact, workbench.CreatedAt, registered?.Registration,
+            registered?.RecordedAt, observed?.Presence, observed?.RecordedAt, workbench.EnrollmentId,
+            enrollment?.State, enrollment?.Error);
     }
 
     private async Task<StoredRecord> PlantAsync(string plantId, CancellationToken cancellationToken) =>
         await ReadAsync<PlantRecord>(Records.PlantScope(plantId), plantId, plantId, cancellationToken)
             ?? throw new ApiException(404, "plant_not_found", "No plant exists at that ID.");
+
+    private async Task<EnrollmentRecord?> EnrollmentAsync(string id, CancellationToken cancellationToken)
+    {
+        var scope = Records.EnrollmentScope(id);
+        var stored = await store.ReadAsync(scope, id, cancellationToken);
+        if (stored is null)
+            return null;
+        var enrollment = Records.Require<EnrollmentRecord>(stored.Record);
+        if (enrollment.Id != id || enrollment.ScopeId != scope)
+            throw new InvalidOperationException("The stored enrollment address is inconsistent.");
+        return enrollment;
+    }
 
     private async Task<StoredRecord?> ReadAsync<T>(string scope, string id, string plantId, CancellationToken cancellationToken)
         where T : StoreRecord
@@ -244,7 +287,14 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
         if (result is not null)
         {
             var record = Records.Require<T>(result.Record);
-            if (record.ScopeId != scope || record.Id != id || record.PlantId != plantId)
+            var storedPlant = record switch
+            {
+                PlantScopedRecord plantScoped => plantScoped.PlantId,
+                PresenceRecord presence => presence.PlantId,
+                OperationRecord operation => operation.PlantId,
+                _ => null
+            };
+            if (record.ScopeId != scope || record.Id != id || storedPlant != plantId)
                 throw new InvalidOperationException("The stored record address is inconsistent.");
             if (record is PlantRecord plant && plant.Plant.Id != plantId)
                 throw new InvalidOperationException("The stored plant identity is inconsistent.");

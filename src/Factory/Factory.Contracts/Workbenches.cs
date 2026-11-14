@@ -4,6 +4,8 @@ namespace Factory.Contracts;
 
 public sealed record WorkbenchRegistration
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? AssignmentVersion { get; init; }
     public required string SchemaVersion { get; init; }
     public required string MachineName { get; init; }
     public required string HostVersion { get; init; }
@@ -15,6 +17,7 @@ public sealed record WorkbenchRegistration
     public void Validate()
     {
         ContractValidation.Version(SchemaVersion);
+        ContractValidation.Require(AssignmentVersion is null or > 0, "AssignmentVersion must be positive when supplied.");
         ContractValidation.Text(MachineName, 128, nameof(MachineName));
         ContractValidation.Text(HostVersion, 128, nameof(HostVersion));
         ContractValidation.Text(WorkerVersion, 128, nameof(WorkerVersion));
@@ -36,6 +39,8 @@ public sealed record WorkbenchRegistration
 
 public sealed record WorkbenchPresence
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? AssignmentVersion { get; init; }
     public required string SchemaVersion { get; init; }
     public required string Status { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -44,6 +49,7 @@ public sealed record WorkbenchPresence
     public void Validate()
     {
         ContractValidation.Version(SchemaVersion);
+        ContractValidation.Require(AssignmentVersion is null or > 0, "AssignmentVersion must be positive when supplied.");
         ContractValidation.Require(Status is "idle" or "busy" or "notReady", "Unknown presence status.");
         if (Reason is not null)
             ContractValidation.Text(Reason, 256, nameof(Reason));
@@ -53,4 +59,5 @@ public sealed record WorkbenchPresence
 public sealed record WorkbenchView(string SchemaVersion, string Id, string PlantId, string Name,
     EntraApplicationPrincipal Identity, string AdmissionState, string ContactState, DateTimeOffset CreatedAt,
     WorkbenchRegistration? Registration = null, DateTimeOffset? RegisteredAt = null, WorkbenchPresence? Presence = null,
-    DateTimeOffset? LastSeenAt = null);
+    DateTimeOffset? LastSeenAt = null, string? EnrollmentId = null, string? EnrollmentState = null,
+    string? EnrollmentError = null);

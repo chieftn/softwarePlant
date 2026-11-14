@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Factory.Contracts;
+using Factory.Plant.Service;
+using Factory.Plant.Service.Storage;
 using Factory.Workbench;
 using Xunit;
 
@@ -27,21 +29,31 @@ public sealed class WorkbenchConnectionTests : IDisposable
         using var key = RSA.Create(2048);
         var request = new CertificateRequest("CN=Workbench Connection Test", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(180));
-        var journal = BindingStore.Journal(root, plant.Id, certificate);
-        var client = new EnrollmentClient(new PlantHttp(human, _ => Task.FromResult(app.Token(ApiTestApplication.OwnerId, ["Factory.User"]))));
+        var journal = BindingStore.Journal(root, certificate);
+        var client = new EnrollmentClient(new PlantHttp(human, _ => Task.FromResult(app.Token(ApiTestApplication.OwnerId,
+            ["Factory.User", ApiCaller.EnrollmentAdministratorRole]))));
         Assert.Contains(await client.PlantsAsync(CancellationToken.None), item => item.Id == plant.Id);
         await client.SubmitAsync(journal, certificate, CancellationToken.None);
-        Assert.Equal(journal, BindingStore.Journal(root, plant.Id, certificate));
+        Assert.Equal(journal, BindingStore.Journal(root, certificate));
         await client.SubmitAsync(journal, certificate, CancellationToken.None);
         for (var i = 0; i < 3; i++)
             await app.AdvanceAsync(plant.Id, journal.OperationId);
         var view = await client.StatusAsync(journal, CancellationToken.None);
         var binding = EnrollmentClient.SaveBinding(root, journal, view);
+        Assert.Null(binding.PlantId);
         Assert.Equal(binding, BindingStore.Read(root));
         using var machine = new HttpClient(new LostPresenceResponse(app.Server.CreateHandler())) { BaseAddress = new Uri("http://localhost") };
         var machineTransport = new PlantHttp(machine, _ => Task.FromResult(
             app.Token(ApiTestApplication.DaemonId, ["Workbench.Connect"], false, ApiTestApplication.DaemonClientId)));
         var connection = new WorkbenchPlantConnection(machineTransport, binding, "test-release", root);
+        await connection.PublishAsync(CancellationToken.None);
+        Assert.Null(connection.AssignedPlantId);
+        Assert.Empty(app.Store.All<WorkbenchRecord>());
+        var inventory = await human.GetFromJsonAsync<Page<EnrollmentView>>("/v1/enrollments");
+        Assert.Equal(app.Clock.Now, Assert.Single(inventory!.Items).LastSeenAt);
+        using var assignment = await human.PutAsJsonAsync($"/v1/enrollments/{journal.OperationId}/assignment",
+            new EnrollmentAssignment("1", 0, plant.Id));
+        assignment.EnsureSuccessStatusCode();
         await Assert.ThrowsAsync<HttpRequestException>(() => connection.PublishAsync(CancellationToken.None));
         Assert.True(File.Exists(Path.Combine(LocalState.RuntimeDirectory(root), "pending-presence.json")));
         app.Clock.Now += TimeSpan.FromSeconds(20);
@@ -53,7 +65,28 @@ public sealed class WorkbenchConnectionTests : IDisposable
         Assert.Equal("notReady", report.Presence!.Status);
         Assert.Equal(app.Clock.Now, report.LastSeenAt);
         Assert.Equal("test-release", report.Registration!.HostVersion);
-        Assert.Throws<InvalidDataException>(() => BindingStore.Journal(root, Guid.NewGuid().ToString(), certificate));
+        using var unassigned = await human.PutAsJsonAsync($"/v1/enrollments/{journal.OperationId}/assignment",
+            new { schemaVersion = "1", expectedVersion = 1 });
+        unassigned.EnsureSuccessStatusCode();
+        await connection.PublishAsync(CancellationToken.None);
+        Assert.Null(connection.AssignedPlantId);
+        using var createSecond = new HttpRequestMessage(HttpMethod.Post, "/v1/plants")
+            { Content = JsonContent.Create(new PlantWriteRequest { SchemaVersion = "1", Name = "Destination plant" }) };
+        createSecond.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        using var createdSecond = await human.SendAsync(createSecond);
+        createdSecond.EnsureSuccessStatusCode();
+        var secondPlant = (await createdSecond.Content.ReadFromJsonAsync<PlantView>())!;
+        using var moved = await human.PutAsJsonAsync($"/v1/enrollments/{journal.OperationId}/assignment",
+            new EnrollmentAssignment("1", 2, secondPlant.Id));
+        moved.EnsureSuccessStatusCode();
+        await connection.PublishAsync(CancellationToken.None);
+        Assert.Equal(secondPlant.Id, connection.AssignedPlantId);
+        var destination = await human.GetFromJsonAsync<WorkbenchView>($"/v1/plants/{secondPlant.Id}/workbenches/{binding.WorkbenchId}");
+        Assert.Equal(3, destination!.Registration!.AssignmentVersion);
+        Assert.Equal("online", destination.ContactState);
+        Assert.Equal(binding, BindingStore.Read(root));
+        Assert.Equal(1, app.Directory.Creates);
+        Assert.Equal(journal, BindingStore.Journal(root, certificate));
         Assert.Throws<InvalidDataException>(() => ConfigurationStore.Save(root, ConfigurationStore.Read(root) with { PlantServiceUrl = "https://different.example" }));
     }
 
@@ -89,7 +122,8 @@ public sealed class WorkbenchConnectionTests : IDisposable
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var response = await base.SendAsync(request, cancellationToken);
-            if (!lost && response.IsSuccessStatusCode && request.RequestUri!.AbsolutePath.EndsWith("/presence", StringComparison.Ordinal))
+            if (!lost && response.IsSuccessStatusCode && request.RequestUri!.AbsolutePath.StartsWith("/v1/plants/", StringComparison.Ordinal) &&
+                request.RequestUri.AbsolutePath.EndsWith("/presence", StringComparison.Ordinal))
             {
                 lost = true;
                 response.Dispose();

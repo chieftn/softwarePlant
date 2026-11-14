@@ -13,6 +13,7 @@ public sealed partial class WorkbenchLifecycle
         if (!File.Exists(Path.Combine(root, "installation.json")) || LocalState.ReadInstallation(root).State == "uninstalled")
             return;
         var original = Installed();
+        BindingStore.RequireEnrollmentAllowed(root);
         VerifyConfiguration(original);
         var manifest = PackageInstaller.ReadManifest(package);
         if (original.ActiveRelease == manifest.ReleaseId)

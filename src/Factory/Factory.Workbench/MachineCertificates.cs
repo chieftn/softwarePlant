@@ -113,6 +113,7 @@ public static class MachineCertificates
 
     public static X509Certificate2 GetOrCreate(string root)
     {
+        BindingStore.RequireEnrollmentAllowed(root);
         var configuration = ConfigurationStore.Read(root);
         if (File.Exists(Path.Combine(root, "binding.json")))
             return Read(BindingStore.Read(root).CertificateThumbprint);
@@ -155,6 +156,37 @@ public static class MachineCertificates
         if (matches.Count != 1 || !matches[0].HasPrivateKey)
             throw new InvalidDataException("The machine certificate/private key is unavailable. Restore it; do not re-enroll automatically.");
         return matches[0];
+    }
+
+    public static void Remove(string root, string thumbprint)
+    {
+        if (thumbprint.Length != 40 || !thumbprint.All(char.IsAsciiHexDigit))
+            throw new InvalidDataException("Invalid machine certificate thumbprint.");
+        var configuration = ConfigurationStore.Read(root);
+        var name = $"Factory.Workbench.{Guid.Parse(configuration.InstallationId):N}";
+        using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+        store.Open(OpenFlags.ReadWrite);
+        var matches = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false);
+        if (matches.Count > 1 || matches.Count == 1 && matches[0].FriendlyName != name)
+            throw new InvalidDataException("Refusing to remove a certificate not owned by this workbench.");
+        if (CngKey.Exists(name, CngProvider.MicrosoftSoftwareKeyStorageProvider, CngKeyOpenOptions.MachineKey))
+        {
+            using var key = CngKey.Open(name, CngProvider.MicrosoftSoftwareKeyStorageProvider, CngKeyOpenOptions.MachineKey);
+            using var rsa = new RSACng(key);
+            if (matches.Count == 1)
+            {
+                using var publicKey = matches[0].GetRSAPublicKey()
+                    ?? throw new InvalidDataException("The enrolled certificate is not an RSA certificate.");
+                if (!rsa.ExportSubjectPublicKeyInfo().AsSpan().SequenceEqual(publicKey.ExportSubjectPublicKeyInfo()))
+                    throw new InvalidDataException("The named private key does not match the enrolled certificate.");
+            }
+            key.Delete();
+        }
+        foreach (var certificate in matches)
+        {
+            using (certificate)
+                store.Remove(certificate);
+        }
     }
 
     public static void GrantServiceAccess(string root, WorkbenchInstallation installation)

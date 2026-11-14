@@ -10,3 +10,4 @@ public sealed class CreatePlantForm
 
 public sealed record PlantsPage(Page<PlantView> Plants);
 public sealed record WorkbenchesPage(string PlantId, Page<WorkbenchView> Workbenches);
+public sealed record EnrollmentsPage(Page<EnrollmentView> Enrollments, IReadOnlyList<PlantView> Plants);

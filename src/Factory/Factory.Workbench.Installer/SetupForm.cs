@@ -13,9 +13,9 @@ internal sealed class SetupForm : Form
     private readonly string payload = Path.Combine(AppContext.BaseDirectory, "payload");
     private readonly Label profileLabel = new() { AutoSize = true, MaximumSize = new Size(700, 0) };
     private readonly Label status = new() { AutoSize = true, MaximumSize = new Size(700, 0), Text = "Loading installation profile..." };
-    private readonly ComboBox plants = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 680 };
     private readonly Button signIn = new() { Text = "1. Sign in", AutoSize = true };
     private readonly Button install = new() { Text = "2. Enroll and start service", AutoSize = true, Enabled = false };
+    private readonly Button unenroll = new() { Text = "Unenroll and remove service", AutoSize = true, Enabled = false };
     private readonly FlowLayoutPanel actions = new() { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
     private readonly CancellationTokenSource lifetime = new();
     private readonly WindowsWorkbenchService service = new();
@@ -25,6 +25,8 @@ internal sealed class SetupForm : Form
     private bool busy;
     private bool closing;
     private bool configurationReady;
+    private bool removalPending;
+    private bool localCleanupVerified;
 
     public SetupForm()
     {
@@ -37,17 +39,17 @@ internal sealed class SetupForm : Form
             Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false,
             Padding = new Padding(20), AutoScroll = true
         };
-        layout.Controls.Add(new Label { Text = "Install, enroll, and connect this workbench", AutoSize = true, Font = new Font(Font, FontStyle.Bold) });
+        layout.Controls.Add(new Label { Text = "Install and enroll this device in Factory", AutoSize = true, Font = new Font(Font, FontStyle.Bold) });
         layout.Controls.Add(profileLabel);
         layout.Controls.Add(new Label
         {
-            Text = "Development build: install only from a trusted source. Enrollment requires a plant owner or plant-scoped registrar.\n" +
-                "The service starts at boot without sign-in. Worker execution and WSL remain disabled.",
+            Text = "Development build: install only from a trusted source. Enrollment requires Factory.EnrollmentAdministrator.\n" +
+                "Assign the enrolled device to a plant through the website. Worker execution and WSL remain disabled.",
             AutoSize = true, MaximumSize = new Size(700, 0), Margin = new Padding(0, 15, 0, 15)
         });
         layout.Controls.Add(signIn);
-        layout.Controls.Add(plants);
         layout.Controls.Add(install);
+        layout.Controls.Add(unenroll);
         AddAction("Start service", () => Lifecycle.StartAsync(lifetime.Token));
         AddAction("Stop service", () => Lifecycle.StopAsync(lifetime.Token));
         AddAction("Recover service", () => Lifecycle.RecoverAsync(lifetime.Token));
@@ -57,6 +59,7 @@ internal sealed class SetupForm : Form
         Controls.Add(layout);
         signIn.Click += async (_, _) => await Run(SignInAsync);
         install.Click += async (_, _) => await Run(InstallAsync);
+        unenroll.Click += async (_, _) => await Run(UnenrollAsync);
         Shown += async (_, _) => await Run(LoadProfileAsync);
         FormClosing += (_, e) =>
         {
@@ -80,14 +83,19 @@ internal sealed class SetupForm : Form
         profileLabel.Text = $"Plant service: {profile.PlantServiceUrl}\nTenant: {profile.TenantId}";
         MachineCertificates.ProtectStateDirectory(root);
         EnsureConfiguration();
-        configurationReady = true;
-        status.Text = "Sign in, select your plant, and enroll this machine.";
+        status.Text = "Sign in and enroll this device. Plant assignment happens in the Factory website.";
         if (File.Exists(Path.Combine(root, "binding.json")))
         {
             var binding = BindingStore.Read(root);
             install.Text = "Repair installation and start service";
-            status.Text = $"Machine identity retained. Plant {binding.PlantId}; workbench {binding.WorkbenchId}. No human sign-in is needed to reinstall.";
+            status.Text = $"Machine identity retained. Workbench {binding.WorkbenchId}. No human sign-in is needed to reinstall.";
         }
+        var removal = BindingStore.Removal(root);
+        removalPending = removal is { State: not "completed" };
+        localCleanupVerified = removal?.State == "retired";
+        if (removalPending)
+            status.Text = "Unenrollment is incomplete. Resume Unenroll; starting or re-enrolling is blocked.";
+        configurationReady = true;
         return Task.CompletedTask;
     }
 
@@ -126,31 +134,22 @@ internal sealed class SetupForm : Form
         http = PlantHttp.Create(trusted.PlantServiceUrl);
         var connected = new EnrollmentClient(new PlantHttp(http, async cancellation =>
             (await application.AcquireTokenSilent(scopes, authentication.Account).ExecuteAsync(cancellation)).AccessToken));
-        var available = await connected.PlantsAsync(lifetime.Token);
-        plants.DisplayMember = nameof(PlantView.Name);
-        plants.DataSource = available.ToArray();
-        if (File.Exists(Path.Combine(root, "enrollment.json")))
-        {
-            var journal = LocalState.Read<EnrollmentJournal>(Path.Combine(root, "enrollment.json"));
-            plants.SelectedItem = available.SingleOrDefault(item => item.Id == journal.PlantId)
-                ?? throw new InvalidDataException("The enrolled plant is not accessible to this account. Resume with its authorized owner/registrar.");
-            plants.Enabled = false;
-        }
+        await connected.InventoryAsync(lifetime.Token);
         enrollment = connected;
-        status.Text = available.Count == 0 ? "No active plants are accessible to this account." : "Select your plant, then enroll and start the service.";
+        status.Text = "Enrollment administrator authorized. Enroll and start the service; assign this device through the website afterward.";
     }
 
     private async Task InstallAsync()
     {
+        BindingStore.RequireEnrollmentAllowed(root);
         EnsureConfiguration();
         if (!File.Exists(Path.Combine(root, "binding.json")))
         {
             var client = enrollment ?? throw new InvalidDataException("Sign in before enrolling.");
-            var plant = plants.SelectedItem as PlantView ?? throw new InvalidDataException("Select a plant.");
             using var maintenance = LocalState.Lock(root, "maintenance.lock");
             using var ownership = LocalState.LockRuntime(root);
             using var certificate = MachineCertificates.GetOrCreate(root);
-            var journal = BindingStore.Journal(root, plant.Id, certificate);
+            var journal = BindingStore.Journal(root, certificate);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             deadline.CancelAfter(TimeSpan.FromMinutes(15));
             var view = await client.SubmitAsync(journal, certificate, deadline.Token);
@@ -216,8 +215,30 @@ internal sealed class SetupForm : Form
                 await Task.Delay(TimeSpan.FromSeconds(1), deadline.Token);
             }
         }
-        status.Text = $"Connected: {binding.WorkbenchId}. The website now shows server-observed registration/presence.\n" +
-            "The Windows Service will reconnect after reboot without user sign-in. Execution remains notReady; WSL is not started.";
+        status.Text = $"Enrolled and connected to Factory: {binding.WorkbenchId}.\n" +
+            "Use Enrollments in the Factory website to assign this device to a plant. The service reconnects at boot; execution remains notReady.";
+    }
+
+    private async Task UnenrollAsync()
+    {
+        if (MessageBox.Show(this,
+            "Revoke this enrollment, retire its dedicated Entra identity, remove the Windows service and delete its local certificate?\n\n" +
+            "This cannot be undone. An interrupted attempt can be resumed. Re-enrollment creates a new identity.",
+            "Unenroll workbench", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
+        if (enrollment is null && !localCleanupVerified)
+            throw new InvalidDataException("Sign in as a Factory enrollment administrator before retiring this device.");
+        removalPending = true;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        deadline.CancelAfter(TimeSpan.FromMinutes(15));
+        await new WorkbenchUnenrollment(root, service, MachineCertificates.Remove).RunAsync(enrollment,
+            view => status.Text = $"Removal: {view.State}. {view.Error}\nOperation {view.Id}. Local identity is retained until retirement is confirmed.",
+            deadline.Token);
+        removalPending = false;
+        localCleanupVerified = false;
+        install.Text = "2. Enroll and start service";
+        status.Text = "Unenrolled. The old identity is retired, the service and certificate are removed, and audit history is retained.\n" +
+            "You may enroll again or uninstall the MSI. MSI uninstall alone does not revoke enrollment.";
     }
 
     private void AddAction(string text, Func<Task> action)
@@ -232,7 +253,7 @@ internal sealed class SetupForm : Form
         if (busy)
             return;
         busy = true;
-        signIn.Enabled = install.Enabled = actions.Enabled = false;
+        signIn.Enabled = install.Enabled = unenroll.Enabled = actions.Enabled = false;
         try { await action(); }
         catch (OperationCanceledException)
         { status.Text = "Canceled or timed out. Progress is retained. Resume setup with the same profile/account; do not delete identity or journals."; }
@@ -247,9 +268,11 @@ internal sealed class SetupForm : Form
         {
             busy = false;
             signIn.Enabled = configurationReady;
-            install.Enabled = configurationReady && (File.Exists(Path.Combine(root, "binding.json")) ||
-                enrollment is not null && plants.SelectedItem is PlantView);
-            actions.Enabled = configurationReady && File.Exists(Path.Combine(root, "installation.json"));
+            install.Enabled = configurationReady && !removalPending && (File.Exists(Path.Combine(root, "binding.json")) ||
+                enrollment is not null);
+            unenroll.Enabled = configurationReady && (enrollment is not null || localCleanupVerified) &&
+                (File.Exists(Path.Combine(root, "enrollment.json")) || removalPending);
+            actions.Enabled = configurationReady && !removalPending && File.Exists(Path.Combine(root, "installation.json"));
             if (closing)
                 Close();
         }

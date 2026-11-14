@@ -33,7 +33,8 @@ public static class ConfigurationStore
         var path = Path.Combine(root, "config.json");
         if (File.Exists(path) && Read(root).InstallationId != configuration.InstallationId)
             throw new InvalidDataException("Configuration cannot replace this installation's identity.");
-        if (File.Exists(path) && (File.Exists(Path.Combine(root, "binding.json")) || File.Exists(Path.Combine(root, "enrollment.json"))))
+        if (File.Exists(path) && (File.Exists(Path.Combine(root, "binding.json")) || File.Exists(Path.Combine(root, "enrollment.json")) ||
+            BindingStore.Removal(root) is { State: not "completed" }))
         {
             var previous = Read(root);
             if (previous.PlantServiceUrl != configuration.PlantServiceUrl || previous.TenantId != configuration.TenantId ||

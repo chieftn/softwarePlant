@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using Factory.Plant.Service.Web;
+using Factory.Plant.Service;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
@@ -15,6 +16,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -25,6 +27,7 @@ namespace Factory.Tests;
 
 public sealed class WebsiteTestApplication(string environment = "Development") : ApiTestApplication
 {
+    public bool EnableEnrollment { get; init; }
     private readonly Dictionary<string, string> tokens = [];
     public bool WrongAudience { get; set; }
     public bool WrongTenant { get; set; }
@@ -54,6 +57,22 @@ public sealed class WebsiteTestApplication(string environment = "Development") :
         }));
         builder.ConfigureTestServices(services =>
         {
+            if (EnableEnrollment)
+            {
+                services.PostConfigure<EnrollmentSettings>(settings =>
+                {
+                    settings.Enabled = true;
+                    settings.InstallerClientId = Audience;
+                    settings.ProvisioningClientId = Audience;
+                    settings.ProvisioningObjectId = DaemonId;
+                    settings.ProvisioningCredential = "ManagedIdentity";
+                });
+                foreach (var descriptor in services.Where(item => item.ServiceType == typeof(IHostedService) &&
+                    item.ImplementationType == typeof(EnrollmentWorker)).ToArray())
+                    services.Remove(descriptor);
+                services.RemoveAll<IDirectoryProvisioner>();
+                services.AddSingleton<IDirectoryProvisioner>(new TestDirectory());
+            }
             services.PostConfigure<KeyManagementOptions>(options =>
             {
                 options.XmlRepository = new TestKeyRepository();

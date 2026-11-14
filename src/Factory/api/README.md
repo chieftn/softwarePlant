@@ -30,18 +30,31 @@ Registration and presence return 204 after persistence. Both require `schemaVers
 
 Admission, reported availability and contact freshness are separate. Reported capabilities are not permission grants. Registration does not enroll or activate a machine, and presence never claims work, heartbeats an assignment or frees an execution slot. Execution and operator controls remain outside this slice. No generic workbench-create endpoint is defined.
 
-## Device-Initiated Enrollment
+## Service-Wide Enrollment and Plant Assignment
+
+Use `/v1/enrollments` as `E` below. These are service-wide, not plant-scoped routes.
 
 | Method | Route | Purpose |
 |---|---|---|
-| POST | `P/enrollments/challenge` | Owner/plant-registrar challenge for an immutable machine draft and public certificate. |
-| POST | `P/enrollments` | Verify key possession and persist authorized background provisioning; return 202/status URL. |
-| GET | `P/enrollments/{operationId}` | Current state for the original enrolling principal with current plant authority. |
-| POST | `P/enrollments/{operationId}/activate` | Match the actual provisioned application token before activating its pending admission. |
+| GET | `E` | Enrollment-administrator inventory, including unassigned and retired devices. |
+| POST | `E/challenge` | Enrollment-administrator challenge for an immutable machine draft and public certificate. |
+| POST | `E` | Verify key possession and persist background provisioning; return 202/status URL, initially unassigned. |
+| GET | `E/{operationId}` | Current state for any authorized enrollment administrator. |
+| PUT | `E/{operationId}/assignment` | Assign/move/unassign using `expectedVersion`; omit `plantId` to unassign. |
+| POST | `E/{operationId}/revoke` | Revoke access and retire owned directory identity; optional original draft cancels an unsubmitted operation. |
+| POST | `E/{operationId}/activate` | Match the provisioned application token before activating enrollment. |
+| GET | `E/{operationId}/connection` | Machine reads its current nullable plant assignment and version. |
+| PUT | `E/{operationId}/presence` | Active machine reports Factory presence, including while unassigned. |
 
-No separate approver or website enrollment mutation exists. Persist the original operation ID/key before submitting. Retrying an identical draft may use a fresh challenge; changing the draft under that ID returns 409. Provisioning checkpoints, per-installation reservations, ownership/public-key reconciliation, and conditional writes prevent blind duplicate directory creation. `needsAttention` requires administrator reconciliation, not a new identity.
+Human enrollment operations require delegated `Plant.Access`, `Factory.User` and the explicitly assigned `Factory.EnrollmentAdministrator` role. Plant ownership alone is insufficient. Assignments additionally require owner/plant-registrar authority over source and destination plants. The website uses the same operations with cookie authentication and antiforgery protection. Devices enroll without selecting a plant; assignment is a separate website action.
 
-Enrollment is disabled without explicit server provisioning configuration. The installer receives neither a client secret nor Graph grants; the background worker uses the administrator-configured provisioner. The resulting machine uses its own certificate for `Workbench.Connect`, never the human's token. Website inventory remains read-only. See [bootstrap](../bootstrap/tenant/README.md#enable-workbench-enrollment) and [installer](../README.md#windows-installer-and-registration).
+Persist the original operation ID/key before submitting. Retrying an identical draft may use a fresh challenge; changing the draft under that ID returns 409. Provisioning checkpoints, service-wide installation reservations and ownership/public-key reconciliation prevent blind duplicate directory creation. `needsAttention` requires reconciliation, not a new identity. Activation and retirement require `Idempotency-Key` equal to the enrollment ID. Retirement retries return current status; only `retired` permits local credential cleanup.
+
+Assignment uses `expectedVersion` rather than `Idempotency-Key`. Moves/unassignments retain identity; plant registration/presence must carry the current `assignmentVersion`. Stale reports are rejected even after moving back to the same plant. An already-authorized in-flight plant request may finish; obsolete membership views suppress its reports. No workload execution/cancellation is implemented.
+
+Retirement revokes access before deleting only the recorded, owned machine identity. It reconciles provisioning races and preserves audit history; `retirementNeedsAttention` keeps access revoked and requires an explicit retry after reconciliation. Unassign, retirement and software uninstall are different operations.
+
+New enrollment is disabled without explicit server provisioning configuration. Disabling new enrollment does not disable existing machine connections, status or retirement; retain the provisioner configuration to process directory cleanup. The installer receives neither a client secret nor Graph grants. The resulting machine uses its own certificate for `Workbench.Connect`, never the human's token. See [bootstrap](../bootstrap/tenant/README.md#enable-workbench-enrollment) and [installer](../README.md#windows-installer-and-registration).
 
 ## Validation
 

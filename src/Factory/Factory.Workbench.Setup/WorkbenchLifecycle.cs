@@ -19,6 +19,7 @@ public sealed partial class WorkbenchLifecycle(string root, IWorkbenchService se
         cancellationToken.ThrowIfCancellationRequested();
         using var maintenance = LocalState.Lock(root, "maintenance.lock");
         using var runtime = LocalState.LockRuntime(root);
+        BindingStore.RequireEnrollmentAllowed(root);
         var configuration = ConfigurationStore.Read(root);
         if (File.Exists(Path.Combine(root, "installation.json")) &&
             LocalState.ReadInstallation(root).State != "uninstalled")
@@ -46,6 +47,7 @@ public sealed partial class WorkbenchLifecycle(string root, IWorkbenchService se
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var maintenance = LocalState.Lock(root, "maintenance.lock");
+        BindingStore.RequireEnrollmentAllowed(root);
         var installation = Installed();
         VerifyConfiguration(installation);
         VerifyRelease(installation, installation.ActiveRelease);
@@ -73,6 +75,7 @@ public sealed partial class WorkbenchLifecycle(string root, IWorkbenchService se
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var maintenance = LocalState.Lock(root, "maintenance.lock");
+        BindingStore.RequireEnrollmentAllowed(root);
         var installation = Installed();
         VerifyConfiguration(installation);
         var manifest = PackageInstaller.ReadManifest(package);
@@ -90,6 +93,7 @@ public sealed partial class WorkbenchLifecycle(string root, IWorkbenchService se
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var maintenance = LocalState.Lock(root, "maintenance.lock");
+        BindingStore.RequireEnrollmentAllowed(root);
         var installation = Installed();
         VerifyConfiguration(installation);
         if (installation.PreviousRelease is not { } previous)
@@ -119,6 +123,7 @@ public sealed partial class WorkbenchLifecycle(string root, IWorkbenchService se
                 File.Delete(InstallerJournal);
             return;
         }
+        BindingStore.RequireEnrollmentAllowed(root);
         if (installer is not null)
         {
             await RollbackInstallerCoreAsync(installer.TransactionId, cancellationToken);

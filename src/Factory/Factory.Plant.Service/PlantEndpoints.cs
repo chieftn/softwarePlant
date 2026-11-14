@@ -23,7 +23,7 @@ public static partial class PlantEndpoints
     public static void MapPlantEndpoints(this WebApplication app)
     {
         var plants = app.MapGroup("/v1/plants").RequireRateLimiting("api");
-        MapEnrollmentEndpoints(plants);
+        MapEnrollmentEndpoints(app);
         plants.MapGet("", async (HttpContext context, PlantOperations operations, CancellationToken cancellationToken) =>
         {
             var (size, token) = PageQuery(context);

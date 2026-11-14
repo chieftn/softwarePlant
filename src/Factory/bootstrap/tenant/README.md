@@ -31,9 +31,9 @@ The script configures:
 |---|---|
 | Application | Single tenant; API access-token version 2; `api://<client-id>` identifier; delegated `Plant.Access` scope. |
 | Web sign-in | Authorization-code callbacks `https://localhost:7443/signin-oidc` and `https://localhost:7443/signout-callback-oidc`; implicit grants disabled. |
-| App roles | `Factory.User` and `Factory.PlantCreator` for users; `Workbench.Connect` for applications. Creating that daemon role does not enroll or authorize a workbench. |
+| App roles | `Factory.User`, `Factory.PlantCreator` and dedicated `Factory.EnrollmentAdministrator` for users; `Workbench.Connect` for applications. Neither plant ownership nor creating the daemon role enrolls a device. |
 | Enterprise application | Service principal, with user assignment required. |
-| Requested user | `-AssignCurrentUser`, or `-UserObjectId '<tenant-user-object-id>'`, assigns both user roles. Omit both switches to leave assignments to an administrator. |
+| Requested user | `-AssignCurrentUser`, or `-UserObjectId '<tenant-user-object-id>'`, assigns `Factory.User` and `Factory.PlantCreator` only. Enrollment administration is never granted implicitly. |
 
 User role assignments govern browser access. They do **not** give browser users direct Cosmos access. The development ASP.NET application receives its own Cosmos permission in tier 3.
 
@@ -82,6 +82,10 @@ A tenant administrator able to grant Microsoft Graph application permissions (su
     -ProvisioningCredential ClientSecret `
     -GrantProvisioningPermissions
 ```
+
+Enrollment is now independent of a plant. This bootstrap adds/preserves the `Factory.EnrollmentAdministrator` user role without assigning it by default. To authorize a reviewed operator, supply `-EnrollmentAdministratorObjectId '<approved-object-id>'`; this additively assigns `Factory.User` and `Factory.EnrollmentAdministrator` to that exact principal. It does not grant a directory-administrator role or change existing browser callbacks. Otherwise have an Entra administrator assign those application roles explicitly. Renew browser/installer sign-in after assignment.
+
+The device enrolls into service-wide inventory, initially unassigned. Assign/move/unassign it through the Enrollments website; operators also need registration authority over the source and destination plants. Retiring the enrollment is a separate, irreversible device-identity action. The installer and daemon still receive no Graph provisioning permissions.
 
 For production, select `-Environment production`, the production tenant metadata, and `-ProvisioningCredential ManagedIdentity`. The script requires the exact existing provisioner ID, supports `-WhatIf`, and prompts before changes. A rerun resumes the recorded installer identity; `-InstallerClientId` explicitly adopts an existing compatible public installer app instead of trusting a matching display name.
 

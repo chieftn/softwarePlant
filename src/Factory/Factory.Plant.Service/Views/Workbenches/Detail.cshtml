@@ -18,6 +18,20 @@
     </dl>
     <p class="muted">Presence is a report, not a capacity reservation or a guarantee that a disconnected process has stopped.</p>
 </section>
+@if (Model.EnrollmentId is { } enrollmentId)
+{
+    <section class="panel">
+        <h2>Plant membership</h2>
+        <p>Enrollment: <code>@enrollmentId</code>. State: @(Model.EnrollmentState ?? "unknown").</p>
+        @if (Model.EnrollmentError is { } error)
+        {
+            <p role="alert">@error</p>
+        }
+        <p>Unassign or move this device through Enrollments. Its identity and certificate remain enrolled.
+            Retire the enrollment only when removing the device from Factory entirely.</p>
+        <p><a href="/enrollments">Manage enrollment and assignment</a></p>
+    </section>
+}
 <section class="panel">
     <h2>Registration</h2>
     @if (Model.Registration is { } registration)

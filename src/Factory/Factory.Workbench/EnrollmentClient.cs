@@ -9,8 +9,9 @@ using Factory.Contracts;
 
 namespace Factory.Workbench;
 
-public sealed record EnrollmentJournal(string SchemaVersion, string InstallationId, string PlantId,
-    string OperationId, string CertificateThumbprint, string MachineName);
+public sealed record EnrollmentJournal(string SchemaVersion, string InstallationId, string? PlantId,
+    string OperationId, string CertificateThumbprint, string MachineName, string? PublicCertificate = null);
+public sealed record UnenrollmentJournal(string SchemaVersion, EnrollmentJournal Enrollment, string State);
 
 public sealed class PlantConnectionException(HttpStatusCode status, string message) : IOException(message)
 {
@@ -19,6 +20,41 @@ public sealed class PlantConnectionException(HttpStatusCode status, string messa
 
 public static class BindingStore
 {
+    public static EnrollmentJournal ReadJournal(string root)
+    {
+        var journal = LocalState.Read<EnrollmentJournal>(Path.Combine(root, "enrollment.json"));
+        ValidateJournal(root, journal);
+        return journal;
+    }
+
+    public static void ValidateJournal(string root, EnrollmentJournal journal)
+    {
+        var configuration = ConfigurationStore.Read(root);
+        if (journal.SchemaVersion != "1" || journal.InstallationId != configuration.InstallationId ||
+            journal.PlantId is not null ||
+            !Guid.TryParseExact(journal.OperationId, "D", out var operation) || operation == Guid.Empty ||
+            journal.CertificateThumbprint.Length != 40 || !journal.CertificateThumbprint.All(char.IsAsciiHexDigit))
+            throw new InvalidDataException("Enrollment journal does not match this installation.");
+    }
+
+    public static UnenrollmentJournal? Removal(string root)
+    {
+        var path = Path.Combine(root, "unenrollment.json");
+        if (!File.Exists(path))
+            return null;
+        var journal = LocalState.Read<UnenrollmentJournal>(path);
+        ValidateJournal(root, journal.Enrollment);
+        if (journal.SchemaVersion != "1" || journal.State is not ("requested" or "retired" or "completed"))
+            throw new InvalidDataException("Invalid unenrollment journal. Reconcile it before continuing.");
+        return journal;
+    }
+
+    public static void RequireEnrollmentAllowed(string root)
+    {
+        if (Removal(root) is { State: not "completed" })
+            throw new InvalidDataException("Unenrollment is incomplete. Resume Unenroll before starting or re-enrolling this workbench.");
+    }
+
     public static WorkbenchBinding Read(string root)
     {
         var binding = LocalState.Read<WorkbenchBinding>(Path.Combine(root, "binding.json"));
@@ -30,26 +66,28 @@ public static class BindingStore
     {
         if (binding.SchemaVersion != "1" || binding.InstallationId != configuration.InstallationId ||
             !binding.TenantId.Equals(configuration.TenantId, StringComparison.OrdinalIgnoreCase) ||
-            new[] { binding.PlantId, binding.ClientId, binding.ServicePrincipalId, binding.EnrollmentId }
+            binding.PlantId is not null ||
+            new[] { binding.ClientId, binding.ServicePrincipalId, binding.EnrollmentId }
                 .Any(value => !Guid.TryParseExact(value, "D", out var id) || id == Guid.Empty) ||
             binding.WorkbenchId != $"wb-{Guid.Parse(configuration.InstallationId):N}" ||
             binding.CertificateThumbprint.Length != 40 || !binding.CertificateThumbprint.All(char.IsAsciiHexDigit))
             throw new InvalidDataException("The machine binding does not match this installation.");
     }
 
-    public static EnrollmentJournal Journal(string root, string plantId, X509Certificate2 certificate)
+    public static EnrollmentJournal Journal(string root, X509Certificate2 certificate)
     {
+        RequireEnrollmentAllowed(root);
         var configuration = ConfigurationStore.Read(root);
-        if (!Guid.TryParseExact(plantId, "D", out var plant) || plant == Guid.Empty || !certificate.HasPrivateKey)
-            throw new InvalidDataException("Enrollment requires a plant UUID and a machine private key.");
+        if (!certificate.HasPrivateKey)
+            throw new InvalidDataException("Enrollment requires a machine private key.");
         var path = Path.Combine(root, "enrollment.json");
         var journal = File.Exists(path) ? LocalState.Read<EnrollmentJournal>(path) :
-            new("1", configuration.InstallationId, plant.ToString("D"), Guid.NewGuid().ToString("D"),
-                certificate.Thumbprint, Environment.MachineName);
+            new("1", configuration.InstallationId, null, Guid.NewGuid().ToString("D"),
+                certificate.Thumbprint, Environment.MachineName, Convert.ToBase64String(certificate.RawData));
         if (journal.SchemaVersion != "1" || journal.InstallationId != configuration.InstallationId ||
-            journal.PlantId != plant.ToString("D") || journal.CertificateThumbprint != certificate.Thumbprint ||
+            journal.PlantId is not null || journal.CertificateThumbprint != certificate.Thumbprint ||
             !Guid.TryParseExact(journal.OperationId, "D", out var operation) || operation == Guid.Empty)
-            throw new InvalidDataException("An enrollment journal already exists. Resume its original plant and key; do not create another identity.");
+            throw new InvalidDataException("An enrollment journal already exists. Resume its original key; do not create another identity.");
         LocalState.Write(path, journal);
         return journal;
     }
@@ -119,6 +157,9 @@ public sealed class PlantHttp(HttpClient http, Func<CancellationToken, Task<stri
 
 public sealed class EnrollmentClient(PlantHttp plant)
 {
+    public Task<Page<EnrollmentView>> InventoryAsync(CancellationToken cancellationToken) =>
+        plant.ReadAsync<Page<EnrollmentView>>("v1/enrollments?pageSize=1", cancellationToken);
+
     public async Task<IReadOnlyList<PlantView>> PlantsAsync(CancellationToken cancellationToken)
     {
         var plants = new List<PlantView>();
@@ -148,25 +189,34 @@ public sealed class EnrollmentClient(PlantHttp plant)
         };
         draft.Validate();
         var challenge = await plant.SendAsync<EnrollmentChallenge>(HttpMethod.Post,
-            $"v1/plants/{journal.PlantId}/enrollments/challenge", new EnrollmentChallengeRequest(draft), null, cancellationToken);
+            "v1/enrollments/challenge", new EnrollmentChallengeRequest(draft), null, cancellationToken);
         using var key = certificate.GetRSAPrivateKey()
             ?? throw new InvalidDataException("Machine signing key is not available.");
         var proof = Convert.ToBase64String(key.SignData(Encoding.UTF8.GetBytes(challenge.Challenge),
             HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
-        return await plant.SendAsync<EnrollmentView>(HttpMethod.Post, $"v1/plants/{journal.PlantId}/enrollments",
+        return await plant.SendAsync<EnrollmentView>(HttpMethod.Post, "v1/enrollments",
             new EnrollmentSubmission(draft, challenge.Challenge, proof), journal.OperationId, cancellationToken);
     }
 
     public Task<EnrollmentView> StatusAsync(EnrollmentJournal journal, CancellationToken cancellationToken) =>
-        plant.ReadAsync<EnrollmentView>($"v1/plants/{journal.PlantId}/enrollments/{journal.OperationId}", cancellationToken);
+        plant.ReadAsync<EnrollmentView>($"v1/enrollments/{journal.OperationId}", cancellationToken);
+
+    public Task<EnrollmentView> RevokeAsync(EnrollmentJournal journal, CancellationToken cancellationToken) =>
+        plant.SendAsync<EnrollmentView>(HttpMethod.Post,
+            $"v1/enrollments/{journal.OperationId}/revoke",
+            journal.PublicCertificate is null ? null : new EnrollmentDraft
+            {
+                SchemaVersion = "1", OperationId = journal.OperationId, InstallationId = journal.InstallationId,
+                MachineName = journal.MachineName, PublicCertificate = journal.PublicCertificate
+            }, journal.OperationId, cancellationToken);
 
     public static WorkbenchBinding SaveBinding(string root, EnrollmentJournal journal, EnrollmentView view)
     {
         var configuration = ConfigurationStore.Read(root);
-        if (view.SchemaVersion != "1" || view.Id != journal.OperationId || view.PlantId != journal.PlantId ||
+        if (view.SchemaVersion != "1" || view.Id != journal.OperationId ||
             view.State is not ("ready" or "active") || view.ClientId is null || view.ServicePrincipalId is null)
             throw new InvalidDataException("Enrollment is not ready or returned a different operation.");
-        var binding = new WorkbenchBinding("1", journal.InstallationId, journal.PlantId, view.WorkbenchId,
+        var binding = new WorkbenchBinding("1", journal.InstallationId, null, view.WorkbenchId,
             configuration.TenantId, view.ClientId, view.ServicePrincipalId, journal.CertificateThumbprint, journal.OperationId);
         BindingStore.Validate(configuration, binding);
         var path = Path.Combine(root, "binding.json");

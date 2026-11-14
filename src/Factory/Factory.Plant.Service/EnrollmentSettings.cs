@@ -11,7 +11,7 @@ public sealed class EnrollmentSettings
 
     public void Validate(IHostEnvironment environment)
     {
-        if (!Enabled)
+        if (!Enabled && string.IsNullOrEmpty(ProvisioningClientId))
             return;
         if (!Guid.TryParseExact(InstallerClientId, "D", out var installer) || installer == Guid.Empty ||
             !Guid.TryParseExact(ProvisioningClientId, "D", out var client) || client == Guid.Empty ||

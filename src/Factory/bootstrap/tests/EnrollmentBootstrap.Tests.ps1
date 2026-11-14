@@ -12,10 +12,12 @@ $output = Join-Path $root 'enrollment.json'
 $scriptPath = Join-Path $PSScriptRoot '..\tenant\Initialize-WorkbenchEnrollment.ps1'
 $localPath = Join-Path $PSScriptRoot '..\development\Set-EnrollmentConfiguration.ps1'
 $state = @{
-    Creates = 0; Writes = 0; Installer = $null; HasPrincipal = $false; Assignments = @(); FailGrant = $false; SecretInput = $null
+    Creates = 0; Writes = 0; Installer = $null; HasPrincipal = $false; Assignments = @(); AdministratorAssignments = @()
+    FailGrant = $false; SecretInput = $null
     Api = @{
         id = $api; appId = $api
-        appRoles = @(@{ id = [guid]::NewGuid().ToString(); value = 'Workbench.Connect'; isEnabled = $true; allowedMemberTypes = @('Application') })
+        appRoles = @(@{ id = [guid]::NewGuid().ToString(); value = 'Workbench.Connect'; displayName = 'Workbench.Connect';
+            description = 'Connect workbenches'; isEnabled = $true; allowedMemberTypes = @('Application') })
         api = @{
             oauth2PermissionScopes = @(@{ id = [guid]::NewGuid().ToString(); value = 'Plant.Access'; isEnabled = $true })
             preAuthorizedApplications = @(@{ appId = '55555555-5555-5555-5555-555555555555'; delegatedPermissionIds = @([guid]::NewGuid().ToString()) })
@@ -71,7 +73,8 @@ function az {
             $method = Argument $values '--method'
             $url = Argument $values '--url'
             if ($method -eq 'GET') {
-                if ($url -match '/appRoleAssignments$') { @{ value = @($State.Assignments) } }
+                if ($url -match "/servicePrincipals/$Api/appRoleAssignedTo$") { @{ value = @($State.AdministratorAssignments) } }
+                elseif ($url -match '/appRoleAssignments$') { @{ value = @($State.Assignments) } }
                 else { throw "Unexpected Graph read: $url" }
             }
             else {
@@ -80,7 +83,10 @@ function az {
                 if ($method -eq 'PATCH' -and $url -match "/applications/$Installer$") {
                     foreach ($key in $body.Keys) { $State.Installer[$key] = $body[$key] }
                 }
-                elseif ($method -eq 'PATCH' -and $url -match "/applications/$Api$") { $State.Api.api = $body.api }
+                elseif ($method -eq 'PATCH' -and $url -match "/applications/$Api$") { $State.Api.api = $body.api; $State.Api.appRoles = $body.appRoles }
+                elseif ($method -eq 'POST' -and $url -match "/servicePrincipals/$Api/appRoleAssignedTo$") {
+                    $State.AdministratorAssignments += $body
+                }
                 elseif ($method -eq 'POST' -and $url -match "/servicePrincipals/$Provisioner/appRoleAssignments$") {
                     if ($State.FailGrant) { $global:LASTEXITCODE = 1; return }
                     $State.Assignments += $body
@@ -124,9 +130,19 @@ try {
     Assert ($state.Creates -eq 1) 'Resume must reuse the installer application.'
     Assert ($state.Assignments.Count -eq 3) 'Resume must not duplicate directory role grants.'
     Assert ($state.Api.api.preAuthorizedApplications.Count -eq 2) 'Unrelated API preauthorizations must survive.'
+    Assert (@($state.Api.appRoles | Where-Object value -EQ 'Factory.EnrollmentAdministrator').Count -eq 1) 'Enrollment authority must be an explicit, stable user role.'
+    Assert ($state.AdministratorAssignments.Count -eq 0) 'No operator may implicitly receive enrollment administration.'
+    $administratorRole = @($state.Api.appRoles | Where-Object value -EQ 'Factory.EnrollmentAdministrator')[0].id
+    $approvedOperator = '66666666-6666-6666-6666-666666666666'
+    & $scriptPath @parameters -EnrollmentAdministratorObjectId $approvedOperator -Confirm:$false
+    & $scriptPath @parameters -EnrollmentAdministratorObjectId $approvedOperator -Confirm:$false
+    Assert ($state.AdministratorAssignments.Count -eq 2) 'Explicit assignment must grant just service entry and enrollment administration, without duplicates.'
+    Assert (@($state.AdministratorAssignments | Where-Object principalId -NE $approvedOperator).Count -eq 0) 'Only the approved operator may receive new roles.'
+    Assert (@($state.AdministratorAssignments | Where-Object appRoleId -EQ $administratorRole).Count -eq 1) 'The enrollment-administrator role ID must remain stable on resume.'
     Assert ($state.Installer.isFallbackPublicClient -and $state.Installer.publicClient.redirectUris[0] -eq 'http://localhost') 'Installer must use a loopback public client.'
     Assert ($state.Installer.requiredResourceAccess[0].resourceAppId -eq $api) 'Installer must not receive Graph permissions.'
     $metadata = Get-Content -LiteralPath $output -Raw | ConvertFrom-Json -AsHashtable
+    Assert ($metadata.enrollmentAdministratorRoleId -eq $administratorRole) 'Metadata must identify the API administrator role, not a Graph permission.'
     $profile = Get-Content -LiteralPath $metadata.installationProfile -Raw | ConvertFrom-Json -AsHashtable
     Assert ($metadata.ready -and $profile.Count -eq 5 -and $profile.installerClientId -eq $installer) 'A non-secret build profile must be produced only after bootstrap completes.'
     & $localPath -EnrollmentConfiguration $output -WhatIf
