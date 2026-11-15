@@ -15,7 +15,8 @@ public sealed class WorkbenchFullRemoval(string root, IWorkbenchService service,
     private static readonly HashSet<string> RuntimeFiles = new(StringComparer.Ordinal)
     {
         "runtime.json", "runtime-failure.log", "runtime.lock", "plant-reports.lock",
-        "pending-registration.json", "pending-presence.json", "pending-factory-presence.json"
+        "pending-registration.json", "pending-presence.json", "pending-factory-presence.json",
+        "line-configuration.json", "pending-configuration-observation.json"
     };
     private string IntentPath => Path.Combine(root, "removal-intent.json");
 
@@ -54,10 +55,15 @@ public sealed class WorkbenchFullRemoval(string root, IWorkbenchService service,
                 view.WorkbenchId != $"wb-{Guid.Parse(intent.InstallationId):N}" ||
                 view.State is not ("revoking" or "retired" or "retirementNeedsAttention"))
                 throw new InvalidDataException("Factory did not confirm durable retirement acceptance for this device.");
-            intent = intent with { RemoteOutcome = view.State switch
+            intent = intent with
             {
-                "retired" => "confirmed", "revoking" => "pending", _ => "attention"
-            } };
+                RemoteOutcome = view.State switch
+                {
+                    "retired" => "confirmed",
+                    "revoking" => "pending",
+                    _ => "attention"
+                }
+            };
             diagnostics.Record("remote-retirement", intent.RemoteOutcome);
         }
         catch (Exception error) when (error is IOException or InvalidDataException or HttpRequestException or MsalException or

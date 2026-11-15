@@ -15,6 +15,10 @@ namespace Factory.Plant.Service.Storage;
 [JsonDerivedType(typeof(AuditRecord), "audit")]
 [JsonDerivedType(typeof(EnrollmentRecord), "enrollment")]
 [JsonDerivedType(typeof(EnrollmentReservationRecord), "enrollmentReservation")]
+[JsonDerivedType(typeof(ProductionLineRecord), "productionLine")]
+[JsonDerivedType(typeof(ProductionLineRevisionRecord), "productionLineRevision")]
+[JsonDerivedType(typeof(ProductionLineBindingRecord), "productionLineBinding")]
+[JsonDerivedType(typeof(ConfigurationObservationRecord), "configurationObservation")]
 public abstract record StoreRecord
 {
     public required string Id { get; init; }
@@ -108,6 +112,33 @@ public sealed record OperationRecord : StoreRecord
     public required DateTimeOffset RecordedAt { get; init; }
     public PlantView? Plant { get; init; }
     public string? Revision { get; init; }
+    public ProductionLineView? ProductionLine { get; init; }
+}
+
+public sealed record ProductionLineRecord : StoreRecord
+{
+    public required EntraPrincipal Principal { get; init; }
+    public required ProductionLineView Line { get; init; }
+}
+
+public sealed record ProductionLineRevisionRecord : StoreRecord
+{
+    public required ProductionLineView Line { get; init; }
+}
+
+public sealed record ProductionLineBindingRecord : PlantScopedRecord
+{
+    public required ProductionLineBinding Binding { get; init; }
+    public required string EnrollmentId { get; init; }
+    public required long AssignmentVersion { get; init; }
+}
+
+public sealed record ConfigurationObservationRecord : StoreRecord
+{
+    public required string EnrollmentId { get; init; }
+    public string? PlantId { get; init; }
+    public required WorkbenchConfigurationObservation Observation { get; init; }
+    public required DateTimeOffset RecordedAt { get; init; }
 }
 
 public sealed record AuditRecord : StoreRecord
@@ -143,6 +174,7 @@ public static class Records
     public static string WorkbenchScope(string plantId, string workbenchId) => $"plant:{plantId}:workbench:{workbenchId}";
     public static string EnrollmentScope(string operationId) => $"enrollment:{operationId}";
     public static string InstallationScope(string installationId) => $"installation:{installationId}";
+    public static string ProductionLineScope(string lineId) => $"line:{lineId}";
 
     public static T Require<T>(StoreRecord record) where T : StoreRecord =>
         record is T value && record.SchemaVersion == "1" ? value

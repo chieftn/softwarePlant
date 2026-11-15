@@ -29,6 +29,10 @@ public sealed class WorkbenchLifecycleTests : IDisposable
         await Install();
         await Lifecycle.StartAsync(CancellationToken.None);
         var journal = Enrollment();
+        LocalState.Write(Path.Combine(LocalState.RuntimeDirectory(Root), "line-configuration.json"),
+            new { schemaVersion = "1" });
+        LocalState.Write(Path.Combine(LocalState.RuntimeDirectory(Root), "pending-configuration-observation.json"),
+            new { schemaVersion = "1" });
         var diagnostics = new SetupDiagnostics(Root);
         diagnostics.Record("test", "started");
         var certificateRemoved = false;
@@ -376,8 +380,11 @@ public sealed class WorkbenchLifecycleTests : IDisposable
         await Lifecycle.UpdateAsync(Package("second"), true, CancellationToken.None);
         var state = LocalState.ReadInstallation(Root) with
         {
-            State = "updating", ActiveRelease = "first", PreviousRelease = null,
-            PendingRelease = "second", RunRequested = true
+            State = "updating",
+            ActiveRelease = "first",
+            PreviousRelease = null,
+            PendingRelease = "second",
+            RunRequested = true
         };
         LocalState.SaveInstallation(Root, state);
         await Lifecycle.RecoverAsync(CancellationToken.None);
@@ -515,13 +522,18 @@ public sealed class WorkbenchLifecycleTests : IDisposable
 
     private void Configure() => ConfigurationStore.Save(Root, new WorkbenchConfiguration
     {
-        SchemaVersion = "1", InstallationId = Guid.NewGuid().ToString("D"),
+        SchemaVersion = "1",
+        InstallationId = Guid.NewGuid().ToString("D"),
         PlantServiceUrl = "https://plant.example",
         TenantId = "00000000-0000-0000-0000-000000000001",
         ApiClientId = "00000000-0000-0000-0000-000000000002",
         InstallerClientId = "00000000-0000-0000-0000-000000000003",
-        Distribution = "Ubuntu", LinuxUser = "worker", LinuxWorkspaceRoot = "/home/worker/work",
-        AllowedRepositories = [], AllowShellExecution = false, AllowPublication = false
+        Distribution = "Ubuntu",
+        LinuxUser = "worker",
+        LinuxWorkspaceRoot = "/home/worker/work",
+        AllowedRepositories = [],
+        AllowShellExecution = false,
+        AllowPublication = false
     });
 
     private string Package(string release)

@@ -1,0 +1,40 @@
+@model ProductionLineForm
+@{
+    ViewData["Title"] = Model.LineId is null ? "Define production line" : Model.Name;
+}
+<p><a href="/production-lines">Back to production lines</a></p>
+<h1>@ViewData["Title"]</h1>
+@if (Model.LineId is { } id)
+{
+    <p>Line ID: <code>@id</code>. Revision: <code>@Model.Revision</code>.</p>
+    <p>Assign this line from a plant's workbench page. Edits create a new immutable configuration revision.</p>
+}
+<section class="panel">
+    <form action="@(Model.LineId is null ? "/production-lines" : "/production-lines/" + Model.LineId)"
+          method="post" asp-antiforgery="true">
+        <div asp-validation-summary="All" role="alert"></div>
+        <input type="hidden" asp-for="OperationKey" />
+        <input type="hidden" asp-for="Revision" />
+        <label asp-for="Name">Line name</label><input asp-for="Name" maxlength="128" required />
+        <h2>Source and workload</h2>
+        <p>Source provider: GitHub. Connection references identify service-managed integrations; never enter tokens.</p>
+        <label asp-for="SourceRepository">Source repository (owner/name)</label><input asp-for="SourceRepository" required />
+        <label asp-for="BaseBranch">Base branch</label><input asp-for="BaseBranch" required />
+        <label asp-for="WorkloadPath">Workload folder in the repository</label><input asp-for="WorkloadPath" required />
+        <label asp-for="SourceConnection">Source connection reference</label><input asp-for="SourceConnection" required />
+        <h2>Task selection</h2>
+        <p>Task provider: GitHub Issues. Task and source repositories are independently configured.</p>
+        <label asp-for="TaskRepository">Issue repository (owner/name)</label><input asp-for="TaskRepository" required />
+        <label asp-for="TaskConnection">Task connection reference</label><input asp-for="TaskConnection" required />
+        <label asp-for="RequiredLabels">Required approval/selection labels (comma-separated)</label><input asp-for="RequiredLabels" required />
+        <h2>Approved execution limits</h2>
+        <p>These are upper bounds, not permission to bypass local policy. Task execution is not implemented yet.</p>
+        <label><input asp-for="AllowShellExecution" /> Allow shell execution</label>
+        <label><input asp-for="AllowPublication" /> Allow draft-PR publication</label>
+        <label asp-for="MaximumIterations">Maximum implementation/alignment iterations</label>
+        <input asp-for="MaximumIterations" min="1" max="20" required />
+        <label asp-for="TimeoutMinutes">Mission timeout (minutes)</label>
+        <input asp-for="TimeoutMinutes" min="1" max="240" required />
+        <button class="button" type="submit">Save definition</button>
+    </form>
+</section>

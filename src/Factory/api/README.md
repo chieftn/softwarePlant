@@ -57,6 +57,26 @@ Retirement revokes access before deleting only the recorded, owned machine ident
 
 New enrollment is disabled without explicit server provisioning configuration. Disabling new enrollment does not disable existing machine connections, status or retirement; retain the provisioner configuration to process directory cleanup. The installer receives neither a client secret nor Graph grants. The resulting machine uses its own certificate for `Workbench.Connect`, never the human's token. See [bootstrap](../bootstrap/tenant/README.md#enable-workbench-enrollment) and [installer](../README.md#windows-installer-and-registration).
 
+## Production-Line Configuration Synchronization
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET / POST | `/v1/production-lines` | List owned lines or create a configurable line owned by the current Factory user. |
+| GET / PUT | `/v1/production-lines/{lineId}` | Read/update an owned definition; PUT requires an idempotency key and current strong ETag. |
+| GET / PUT | `P/workbenches/{workbenchId}/production-line` | Read a scoped binding; assign/revoke under plant and line ownership using `expectedVersion`. |
+| GET | `E/{operationId}/configuration` | Exact active machine obtains current membership, binding and desired line configuration, including while unassigned. |
+| PUT | `E/{operationId}/configuration-observation` | Exact active machine durably acknowledges its configuration identity/state, using an idempotency key. |
+
+Definitions and immutable configuration revisions live in Cosmos. Source repository/base branch/workload folder, independent issue selection, logical connection references and execution limits are configurable. This is the service registration contract, not a replacement for the existing production-method metadocument schema. Instructions remain in the referenced repository folder.
+
+The first binding supports one configured line per workbench; a line can bind to several approved workbenches/plants. Assigning requires ownership of both line and plant. No new directory role grants are required. A plant's device admission/membership remains separate.
+
+Bindings are fenced by enrollment and membership version. Plant unassignment/move makes the old configuration unavailable immediately, including after moving back to the same plant. Clearing a line binding revokes it. The host discovers changes on its existing 15-second connection loop, clears local revoked configuration, and acknowledges through its Factory route. Network request timeouts add to discovery latency; a server-side change is not proof of immediate remote termination.
+
+The current host persists the received configuration under `runtime\line-configuration.json` and reports `blocked` for a defined line, or `unconfigured` when there is none. It does not fetch the repo workload, install prerequisites, claim issues, invoke Copilot, or launch worker processes. `ready` reports are rejected. Existing connection-only clients remain non-executable but do not acknowledge configuration until upgraded. The new host requires the service's configuration endpoints before rollout.
+
+Observations contain membership/binding/line revisions and server timestamps. New stale reports return `configuration_changed`; identical retries do not refresh or overwrite a newer observation. The website displays desired and observed configuration separately. No claim is released by an observation. Actual hard-stop controls for future SDK/worker execution, bounded contact-loss stopping, and graceful quiescing remain future work.
+
 ## Validation
 
 Validate parsing, references and OpenAPI rules from the repository root:

@@ -63,6 +63,8 @@ tags:
     description: Scoped inventory and reports from an already activated daemon.
   - name: Enrollment
     description: Service-wide device enrollment, one-plant assignment and separate identity retirement.
+  - name: ProductionLines
+    description: Owned configuration definitions, immutable revisions and explicit workbench bindings.
 paths:
   /v1/plants:
     get:
@@ -886,6 +888,171 @@ paths:
           $ref: '#/components/responses/Unavailable'
         default:
           $ref: '#/components/responses/UnexpectedFailure'
+  /v1/production-lines:
+    get:
+      operationId: listProductionLines
+      tags: [ProductionLines]
+      summary: List production lines owned by the authenticated Factory user.
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/ContinuationToken'
+      responses:
+        '200':
+          description: Authorized page of current line definitions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductionLinePage'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+    post:
+      operationId: createProductionLine
+      tags: [ProductionLines]
+      summary: Define a line owned by the authenticated Factory user.
+      description: |
+        Requires delegated Plant.Access and Factory.User. Line identity, ownership
+        and revisions are server-controlled. Configuration, immutable revision,
+        idempotency receipt and audit are committed together. No repository,
+        machine, credentials or tasks are provisioned.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/ProductionLineWrite'
+      responses:
+        '201':
+          description: Created line or identical creation replay.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Location:
+              description: Relative URI of the created production line.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductionLine'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/production-lines/{lineId}:
+    parameters:
+      - $ref: '#/components/parameters/ProductionLineId'
+    get:
+      operationId: getProductionLine
+      tags: [ProductionLines]
+      summary: Read an owned line's current definition and revision.
+      responses:
+        '200':
+          $ref: '#/components/responses/ProductionLine'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+    put:
+      operationId: updateProductionLine
+      tags: [ProductionLines]
+      summary: Replace an owned line configuration using its current ETag.
+      description: |
+        Does not upsert. Requires current ownership, a strong If-Match and an
+        Idempotency-Key. Identical retries return the recorded revision before
+        checking If-Match. A new revision is archived immutably. Running work
+        must not be rewritten by a configuration edit.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/EntityTag'
+      requestBody:
+        $ref: '#/components/requestBodies/ProductionLineWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/ProductionLine'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/plants/{plantId}/workbenches/{workbenchId}/production-line:
+    parameters:
+      - $ref: '#/components/parameters/PlantId'
+      - $ref: '#/components/parameters/WorkbenchId'
+    get:
+      operationId: getProductionLineBinding
+      tags: [ProductionLines]
+      summary: Read the effective line binding under workbench read authority.
+      responses:
+        '200':
+          $ref: '#/components/responses/ProductionLineBinding'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+    put:
+      operationId: assignProductionLine
+      tags: [ProductionLines]
+      summary: Assign or revoke one configured line for an active plant workbench.
+      description: |
+        Requires ownership of the plant and, when assigning, the line. Uses
+        expectedVersion, not an idempotency key. Omit productionLineId to revoke.
+        Bindings are fenced by enrollment and plant membership version; moving
+        away and back never reactivates an old binding. Revocation disables old
+        configuration; acceptance does not confirm remote termination.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductionLineAssignment'
+      responses:
+        '200':
+          $ref: '#/components/responses/ProductionLineBinding'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/configuration:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    get:
+      operationId: getWorkbenchLineConfiguration
+      tags: [ProductionLines]
+      summary: Exact active machine reads its authorized desired configuration.
+      description: |
+        Factory-level route remains available while unassigned. Returns null
+        plant/line as appropriate, not an execution grant. Source workload
+        retrieval and execution are not implemented by this operation.
+      security:
+        - WorkbenchBearer: []
+      responses:
+        '200':
+          description: Current membership, binding and desired line revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkbenchLineConfiguration'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/configuration-observation:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    put:
+      operationId: observeWorkbenchConfiguration
+      tags: [ProductionLines]
+      summary: Exact active machine acknowledges its configuration observation.
+      description: |
+        Requires matching membership/binding/line revisions for a new report.
+        Stale configuration returns 409. Identical retries do not overwrite a
+        newer observation or refresh its timestamp. Available after plant
+        unassignment through Factory authentication. Readiness, task claims,
+        worker execution and quiescing are unsupported in this slice.
+      security:
+        - WorkbenchBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkbenchConfigurationObservation'
+      responses:
+        '204':
+          description: Observation persisted or identical report replayed.
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
 components:
   securitySchemes:
     EntraBearer:
@@ -916,6 +1083,13 @@ components:
         revocation commits. Activation separately accepts only its exact provisioned
         pending identity before the first active transition. Delegated user tokens are not accepted.
   parameters:
+    ProductionLineId:
+      name: lineId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     EnrollmentId:
       name: operationId
       in: path
@@ -978,7 +1152,237 @@ components:
         type: integer
         format: int32
         minimum: 1
+  requestBodies:
+    ProductionLineWrite:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProductionLineWriteRequest'
   schemas:
+    ProductionLineWriteRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, name, source, tasks, policy]
+      properties:
+        schemaVersion:
+          type: string
+          enum: ['1']
+        name:
+          $ref: '#/components/schemas/PlantName'
+        source:
+          $ref: '#/components/schemas/ProductionLineSource'
+        tasks:
+          $ref: '#/components/schemas/ProductionLineTasks'
+        policy:
+          $ref: '#/components/schemas/ProductionLinePolicy'
+    ProductionLineSource:
+      type: object
+      additionalProperties: false
+      required: [provider, repository, baseBranch, workloadPath, connectionReference]
+      properties:
+        provider:
+          type: string
+          enum: [github]
+        repository:
+          type: string
+          minLength: 3
+          maxLength: 200
+          description: GitHub owner/name, never a URL or credential.
+        baseBranch:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Valid Git branch name; resolved and pinned before future execution.
+        workloadPath:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Relative repository folder with no empty, dot or traversal segments.
+        connectionReference:
+          $ref: '#/components/schemas/ConnectionReference'
+    ProductionLineTasks:
+      type: object
+      additionalProperties: false
+      required: [provider, repository, connectionReference, requiredLabels]
+      properties:
+        provider:
+          type: string
+          enum: [github-issues]
+        repository:
+          type: string
+          minLength: 3
+          maxLength: 200
+          description: Independently selected issue repository in owner/name form.
+        connectionReference:
+          $ref: '#/components/schemas/ConnectionReference'
+        requiredLabels:
+          type: array
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+          description: Required approval/selection labels; duplicates are rejected case-insensitively.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+    ConnectionReference:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[a-zA-Z0-9_.-]+$'
+      description: Logical service connection identifier, not credentials.
+    ProductionLinePolicy:
+      type: object
+      additionalProperties: false
+      required: [allowShellExecution, allowPublication, maximumIterations, timeoutMinutes]
+      description: Publication requires shell approval; local permissions remain an independent upper bound.
+      properties:
+        allowShellExecution:
+          type: boolean
+        allowPublication:
+          type: boolean
+        maximumIterations:
+          type: integer
+          minimum: 1
+          maximum: 20
+        timeoutMinutes:
+          type: integer
+          minimum: 1
+          maximum: 240
+    ProductionLine:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, id, revision, owner, createdAt, updatedAt, definition]
+      properties:
+        schemaVersion:
+          type: string
+          enum: ['1']
+        id:
+          type: string
+          format: uuid
+        revision:
+          $ref: '#/components/schemas/EntityTag'
+        owner:
+          $ref: '#/components/schemas/EntraUser'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        definition:
+          $ref: '#/components/schemas/ProductionLineWriteRequest'
+    ProductionLinePage:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items]
+      properties:
+        schemaVersion:
+          type: string
+          enum: ['1']
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ProductionLine'
+        continuationToken:
+          type: string
+    ProductionLineAssignment:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, expectedVersion]
+      properties:
+        schemaVersion:
+          type: string
+          enum: ['1']
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9223372036854775806
+        productionLineId:
+          type: string
+          format: uuid
+          description: Omit to revoke. Explicit null is invalid.
+    ProductionLineBinding:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, plantId, workbenchId, version, productionLineId]
+      properties:
+        schemaVersion:
+          type: string
+          enum: ['1']
+        plantId:
+          $ref: '#/components/schemas/PlantId'
+        workbenchId:
+          $ref: '#/components/schemas/WorkbenchId'
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        productionLineId:
+          type: string
+          format: uuid
+          nullable: true
+    WorkbenchLineConfiguration:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, enrollmentId, workbenchId, plantId, assignmentVersion, bindingVersion, productionLine]
+      properties:
+        schemaVersion:
+          type: string
+          enum: ['1']
+        enrollmentId:
+          type: string
+          format: uuid
+        workbenchId:
+          $ref: '#/components/schemas/WorkbenchId'
+        plantId:
+          type: string
+          format: uuid
+          nullable: true
+        assignmentVersion:
+          type: integer
+          format: int64
+          minimum: 0
+        bindingVersion:
+          type: integer
+          format: int64
+          minimum: 0
+        productionLine:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ProductionLine'
+    WorkbenchConfigurationObservation:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, assignmentVersion, bindingVersion, state, reason]
+      properties:
+        schemaVersion:
+          type: string
+          enum: ['1']
+        assignmentVersion:
+          type: integer
+          format: int64
+          minimum: 0
+        bindingVersion:
+          type: integer
+          format: int64
+          minimum: 0
+        productionLineId:
+          type: string
+          format: uuid
+        productionLineRevision:
+          $ref: '#/components/schemas/EntityTag'
+        state:
+          type: string
+          enum: [unconfigured, preparing, blocked, stopping, needsAttention]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 256
     EnrollmentDraft:
       type: object
       additionalProperties: false
@@ -1375,6 +1779,11 @@ components:
         enrollmentError:
           type: string
           description: Safe retirement or provisioning guidance, when present.
+        configurationObservation:
+          $ref: '#/components/schemas/WorkbenchConfigurationObservation'
+        configurationObservedAt:
+          type: string
+          format: date-time
     WorkbenchPage:
       type: object
       additionalProperties: false
@@ -1429,6 +1838,21 @@ components:
           minimum: 1
           description: When present, matches the Retry-After header.
   responses:
+    ProductionLine:
+      description: Current or recorded production-line definition.
+      headers:
+        ETag:
+          $ref: '#/components/headers/ETag'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProductionLine'
+    ProductionLineBinding:
+      description: Effective versioned line binding; null line means unassigned or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProductionLineBinding'
     EnrollmentInvalid:
       description: Invalid draft, certificate, expired/substituted challenge, or signature. Code invalid_request, invalid_machine_certificate, or invalid_enrollment_proof.
       content:

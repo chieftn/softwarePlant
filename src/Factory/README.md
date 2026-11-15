@@ -22,12 +22,12 @@ Bootstrap handoff files contain identifiers/endpoints, not credentials, and defa
 
 | Location | Implemented |
 |---|---|
-| `Factory.Contracts` | Plant, enrollment, machine binding, registration/presence, installation-profile and configuration contracts. |
-| `Factory.Plant.Service` | Entra bearer API, separate browser sign-in, scoped authorization, durable background directory provisioning, Cosmos persistence and Razor inventory. |
+| `Factory.Contracts` | Plant, enrollment, machine binding, registration/presence, installation-profile, production-line definition/binding and configuration-observation contracts. |
+| `Factory.Plant.Service` | Entra bearer API, separate browser sign-in, scoped authorization, durable background directory provisioning, Cosmos persistence, Razor inventory and owned production-line management. |
 | `Factory.Workbench` | Protected configuration/binding, resumable enrollment, machine CNG certificates, MSAL application tokens, durable reports and runtime state. |
 | `Factory.Workbench.Setup` | Configuration and Windows Service maintenance, identity-preserving updates, and full owned-local removal with best-effort retirement. |
 | `Factory.Workbench.Installer` / `Factory.Workbench.Package` | Graphical enrollment/service setup and a machine-wide Windows MSI with Installed Apps/start-menu integration. |
-| `Factory.Workbench.Host` | Boot-time Windows Service, certificate-authenticated activation/registration/presence, and foreground diagnostics. No WSL or assignment execution. |
+| `Factory.Workbench.Host` | Boot-time Windows Service, certificate-authenticated activation/registration/presence, line configuration discovery/acknowledgment, and foreground diagnostics. No WSL or mission execution. |
 | `Factory.Tests` | Isolated HTTP, authorization, transactions, OIDC/cookies/forms, serialization, OpenAPI and local workbench setup checks. |
 | `api` | [Contract for plant, enrollment and workbench REST operations](api/README.md). |
 | `bootstrap` / `deploy` | Tiered setup scripts and shared/environment-specific Bicep. |
@@ -38,6 +38,18 @@ The website lists, creates and displays plants and shows workbench inventory. Pl
 Assignment execution, group resolution, automatic certificate rotation, and signed production packaging are not implemented. Enrollment is disabled unless an administrator configures the explicit provisioning identity. There is no runtime seed, demonstration identity, interactive-credential fallback or local database substitute. The existing `src\Workbench` projects remain unchanged.
 
 `GET /health/live` proves process liveness only, not Azure connectivity or successful authentication.
+
+## Production lines
+
+Use **Production lines** in the website to create an owned line definition. Specify the source repository/base branch, versioned workload-folder location, independent GitHub Issues repository/required labels, logical connection references, and bounded execution policy. Saving persists the configuration and an immutable revision in Cosmos; it does not access GitHub, provision credentials, or enable execution.
+
+From a plant's workbench page, select **Manage production line** and enter the line ID. Assignment requires ownership of both plant and line and an active enrolled workbench in that plant. One line is configured per workbench initially; the line can be reused across approved resources. Emptying the line ID revokes its configuration. Device unassignment/move also revokes the old binding; returning to the same plant does not restore it.
+
+The upgraded host receives and persists the line configuration, then acknowledges its exact membership/binding/line revision. A defined line reports **blocked** because repository workload retrieval, unattended GitHub/Copilot access and worker execution are not implemented yet. No line reports **unconfigured**. The assignment page shows desired configuration and the last observed acknowledgment separately; neither is a claim or proof of remote termination.
+
+For ProductZero, enter its name and `chieftn/productionOutput1` as source/issue repository with workload folder `productionLine`. Confirm the actual base branch, approval labels, connection identifiers, limits and target plant/workbench before live configuration. ProductZero has no special code path or runtime seed.
+
+Deploy the service's new configuration endpoints before upgrading a host to this slice. No live deployment or test-machine installation is performed by building it. See the [execution plan](../../docs/development-missions-execution-plan.md) and [REST contract](api/README.md#production-line-configuration-synchronization).
 
 ## Windows installer and registration
 

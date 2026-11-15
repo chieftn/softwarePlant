@@ -7,6 +7,7 @@ public sealed record WorkbenchRuntimeStatus(string SchemaVersion, string Install
     int ProcessId, DateTimeOffset ObservedAt, string State, string Reason)
 {
     public bool PlantConnected { get; init; }
+    public Factory.Contracts.WorkbenchConfigurationObservation? ConfigurationObservation { get; init; }
 }
 
 public sealed record WorkbenchInstallation(

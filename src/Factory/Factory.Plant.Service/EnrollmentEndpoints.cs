@@ -89,5 +89,20 @@ public static partial class PlantEndpoints
                 await BodyAsync<WorkbenchPresence>(context, cancellationToken), cancellationToken);
             return Results.NoContent();
         }).RequireAuthorization("workbench");
+        inventory.MapGet("/{operationId}/configuration", async (string operationId, HttpContext context,
+            EnrollmentOperations operations, CancellationToken cancellationToken) =>
+        {
+            NoQuery(context);
+            return Results.Json(await operations.ConfigurationAsync(PlantId(operationId), ApiCaller.Read(context.User),
+                cancellationToken), Json);
+        }).RequireAuthorization("workbench");
+        inventory.MapPut("/{operationId}/configuration-observation", async (string operationId, HttpContext context,
+            EnrollmentOperations operations, CancellationToken cancellationToken) =>
+        {
+            NoQuery(context);
+            await operations.ObserveConfigurationAsync(PlantId(operationId), ApiCaller.Read(context.User), OperationKey(context),
+                await BodyAsync<WorkbenchConfigurationObservation>(context, cancellationToken), cancellationToken);
+            return Results.NoContent();
+        }).RequireAuthorization("workbench");
     }
 }

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.RegularExpressions;
 using Factory.Contracts;
 using Factory.Plant.Service;
@@ -12,6 +13,93 @@ namespace Factory.Tests;
 public sealed class WebsiteTests
 {
     [Fact]
+    public async Task ProductionLineFormsPersistDefinitionsAndVersionedAssignmentsWithAntiforgery()
+    {
+        using var app = new WebsiteTestApplication();
+        using var owner = app.Human();
+        var (plant, _) = await CreateAsync(owner, "Line plant");
+        var enrollment = ProductionLineTests.SeedMember(app, plant.Id);
+        using var browser = app.Browser();
+        using var signedIn = await app.SignInAsync(browser);
+        using var createPage = await browser.GetAsync("/production-lines/create");
+        Assert.Equal(HttpStatusCode.OK, createPage.StatusCode);
+        var html = await createPage.Content.ReadAsStringAsync();
+        var form = new Dictionary<string, string>
+        {
+            ["Name"] = "ProductZero",
+            ["SourceRepository"] = "chieftn/productionOutput1",
+            ["BaseBranch"] = "main",
+            ["WorkloadPath"] = "productionLine",
+            ["SourceConnection"] = "github-source",
+            ["TaskRepository"] = "chieftn/productionOutput1",
+            ["TaskConnection"] = "github-tasks",
+            ["RequiredLabels"] = "approved",
+            ["MaximumIterations"] = "3",
+            ["TimeoutMinutes"] = "30",
+            ["OperationKey"] = Hidden(html, "OperationKey")
+        };
+        using var noToken = await browser.PostAsync("/production-lines", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.BadRequest, noToken.StatusCode);
+        Assert.Empty(app.Store.All<ProductionLineRecord>());
+        form["__RequestVerificationToken"] = Hidden(html, "__RequestVerificationToken");
+        using var created = await browser.PostAsync("/production-lines", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.Redirect, created.StatusCode);
+        var line = Assert.Single(app.Store.All<ProductionLineRecord>()).Line;
+        using var definitionPage = await browser.GetAsync($"/production-lines/{line.Id}");
+        Assert.Equal(HttpStatusCode.OK, definitionPage.StatusCode);
+        html = await definitionPage.Content.ReadAsStringAsync();
+        form["OperationKey"] = Hidden(html, "OperationKey");
+        form["Revision"] = Hidden(html, "Revision");
+        form["__RequestVerificationToken"] = Hidden(html, "__RequestVerificationToken");
+        form["Name"] = "Revised ProductZero";
+        using var edited = await browser.PostAsync($"/production-lines/{line.Id}", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.Redirect, edited.StatusCode);
+        Assert.Equal("Revised ProductZero", Assert.Single(app.Store.All<ProductionLineRecord>()).Line.Definition.Name);
+        var route = $"/plants/{plant.Id}/workbenches/{enrollment.WorkbenchId}/production-line";
+        using var assignmentPage = await browser.GetAsync(route);
+        Assert.Equal(HttpStatusCode.OK, assignmentPage.StatusCode);
+        html = await assignmentPage.Content.ReadAsStringAsync();
+        var assignment = new Dictionary<string, string>
+        {
+            ["ExpectedVersion"] = "0",
+            ["ProductionLineId"] = line.Id,
+            ["__RequestVerificationToken"] = Hidden(html, "__RequestVerificationToken")
+        };
+        using var assigned = await browser.PostAsync(route, new FormUrlEncodedContent(assignment));
+        Assert.Equal(HttpStatusCode.Redirect, assigned.StatusCode);
+        Assert.Equal(line.Id, Assert.Single(app.Store.All<ProductionLineBindingRecord>()).Binding.ProductionLineId);
+        assignment["ExpectedVersion"] = "1";
+        assignment["ProductionLineId"] = "";
+        using var revoked = await browser.PostAsync(route, new FormUrlEncodedContent(assignment));
+        Assert.Equal(HttpStatusCode.Redirect, revoked.StatusCode);
+        Assert.Null(Assert.Single(app.Store.All<ProductionLineBindingRecord>()).Binding.ProductionLineId);
+        using var admin = app.Client(app.Token(ApiTestApplication.OwnerId, ["Factory.User", ApiCaller.EnrollmentAdministratorRole]));
+        using var unassigned = await admin.PutAsJsonAsync($"/v1/enrollments/{enrollment.Id}/assignment",
+            new { schemaVersion = "1", expectedVersion = 1 });
+        unassigned.EnsureSuccessStatusCode();
+        app.Store.Seed(new ConfigurationObservationRecord
+        {
+            Id = "configuration-observation",
+            ScopeId = enrollment.ScopeId,
+            EnrollmentId = enrollment.Id,
+            RecordedAt = app.Clock.Now,
+            Observation = new()
+            {
+                SchemaVersion = "1",
+                AssignmentVersion = 2,
+                BindingVersion = 0,
+                State = "unconfigured",
+                Reason = "Revocation acknowledged; no execution was started."
+            }
+        });
+        using var revocationPage = await browser.GetAsync(route);
+        Assert.Equal(HttpStatusCode.OK, revocationPage.StatusCode);
+        Assert.Contains("Desired configuration acknowledged.", await revocationPage.Content.ReadAsStringAsync());
+        using var apiWithCookie = await browser.GetAsync("/v1/production-lines");
+        await ProblemAsync(apiWithCookie, 401, "unauthenticated");
+    }
+
+    [Fact]
     public async Task EnrollmentInventoryAssignsAndUnassignsThroughProtectedFormsWithoutReplacingIdentity()
     {
         using var app = new WebsiteTestApplication { EnableEnrollment = true };
@@ -21,15 +109,25 @@ public sealed class WebsiteTests
         var installation = Guid.NewGuid().ToString("D");
         var enrolled = new EnrollmentRecord
         {
-            Id = id, ScopeId = Records.EnrollmentScope(id), State = "active", WorkbenchId = $"wb-{Guid.Parse(installation):N}",
+            Id = id,
+            ScopeId = Records.EnrollmentScope(id),
+            State = "active",
+            WorkbenchId = $"wb-{Guid.Parse(installation):N}",
             Draft = new EnrollmentDraft
             {
-                SchemaVersion = "1", OperationId = id, InstallationId = installation, MachineName = "Unassigned fixture",
+                SchemaVersion = "1",
+                OperationId = id,
+                InstallationId = installation,
+                MachineName = "Unassigned fixture",
                 PublicCertificate = "AQID"
             },
-            Requester = new(ApiTestApplication.Tenant, ApiTestApplication.OwnerId), RequesterClientId = ApiTestApplication.Audience,
-            Digest = "fixture", UpdatedAt = app.Clock.Now, AuthorizedAt = app.Clock.Now,
-            ClientId = ApiTestApplication.DaemonClientId, ServicePrincipalId = ApiTestApplication.DaemonId
+            Requester = new(ApiTestApplication.Tenant, ApiTestApplication.OwnerId),
+            RequesterClientId = ApiTestApplication.Audience,
+            Digest = "fixture",
+            UpdatedAt = app.Clock.Now,
+            AuthorizedAt = app.Clock.Now,
+            ClientId = ApiTestApplication.DaemonClientId,
+            ServicePrincipalId = ApiTestApplication.DaemonId
         };
         app.Store.Seed(enrolled);
         using var admin = app.Browser();
@@ -42,11 +140,13 @@ public sealed class WebsiteTests
         var token = Hidden(html, "__RequestVerificationToken");
         var route = $"/enrollments/{id}/assignment";
         using var missingToken = await admin.PostAsync(route, new FormUrlEncodedContent(new Dictionary<string, string>
-            { ["plantId"] = plant.Id, ["expectedVersion"] = "0" }));
+        { ["plantId"] = plant.Id, ["expectedVersion"] = "0" }));
         Assert.Equal(HttpStatusCode.BadRequest, missingToken.StatusCode);
         var form = new Dictionary<string, string>
         {
-            ["plantId"] = plant.Id, ["expectedVersion"] = "0", ["__RequestVerificationToken"] = token
+            ["plantId"] = plant.Id,
+            ["expectedVersion"] = "0",
+            ["__RequestVerificationToken"] = token
         };
         using var assigned = await admin.PostAsync(route, new FormUrlEncodedContent(form));
         Assert.Equal(HttpStatusCode.Redirect, assigned.StatusCode);

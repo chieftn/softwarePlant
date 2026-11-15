@@ -159,7 +159,8 @@ public sealed class TestRecordStore : IRecordStore
             IReadOnlyList<StoreRecord> result = records.Values.Select(value => value.Record)
                 .Where(record => Type(record) == query.Type && (query.PlantId is null || record is PlantScopedRecord scoped && scoped.PlantId == query.PlantId) &&
                     (query.ScopeId is null || record.ScopeId == query.ScopeId) &&
-                    (query.Principal is null || record is AccessRecord access && access.Principal == query.Principal) &&
+                    (query.Principal is null || record is AccessRecord access && access.Principal == query.Principal ||
+                        record is ProductionLineRecord line && line.Principal == query.Principal) &&
                     (query.States is null || record is EnrollmentRecord enrollment && query.States.Contains(enrollment.State)) &&
                     (query.AfterId is null || StringComparer.Ordinal.Compare(record.Id, query.AfterId) > 0))
                 .OrderBy(record => record.Id, StringComparer.Ordinal).Take(query.Limit).Select(Clone).ToArray();

@@ -46,14 +46,22 @@ public static class WorkbenchRuntime
                             connection = new(new PlantHttp(http, tokens.TokenAsync, tokens.RequestFreshToken), binding, release, root);
                         }
                         await connection.PublishAsync(cancellationToken);
-                        status = status with { PlantConnected = true, Reason = connection.AssignedPlantId is null
-                            ? "Enrolled and connected to Factory; unassigned. Assign this device through the website. Execution is unavailable."
-                            : "Factory and assigned plant connected; presence is notReady. Execution and WSL are unavailable." };
+                        status = status with
+                        {
+                            PlantConnected = true,
+                            ConfigurationObservation = connection.ConfigurationObservation,
+                            Reason = connection.ConfigurationObservation?.Reason ?? "Factory connected; execution remains disabled."
+                        };
                     }
                     catch (Exception error) when (error is HttpRequestException or IOException or MsalException or CryptographicException ||
                         error is TaskCanceledException && !cancellationToken.IsCancellationRequested)
                     {
-                        status = status with { PlantConnected = false, Reason = $"Plant connection unavailable: {error.GetType().Name}. Execution remains disabled. WSL is not started." };
+                        status = status with
+                        {
+                            PlantConnected = false,
+                            ConfigurationObservation = connection?.ConfigurationObservation,
+                            Reason = $"Plant connection unavailable: {error.GetType().Name}. Execution remains disabled. WSL is not started."
+                        };
                         if (logger is not null)
                             logger.LogWarning(error, "Plant connection unavailable. Reports are retained; execution remains disabled.");
                         else

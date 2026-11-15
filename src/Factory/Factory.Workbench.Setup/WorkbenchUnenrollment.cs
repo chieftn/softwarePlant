@@ -58,7 +58,9 @@ public sealed class WorkbenchUnenrollment(string root, IWorkbenchService service
             var paths = new[] { Path.Combine(root, "binding.json"), Path.Combine(root, "enrollment.json"),
                 LocalState.RuntimeStatusPath(root), Path.Combine(LocalState.RuntimeDirectory(root), "pending-registration.json"),
                 Path.Combine(LocalState.RuntimeDirectory(root), "pending-presence.json"),
-                Path.Combine(LocalState.RuntimeDirectory(root), "pending-factory-presence.json") };
+                Path.Combine(LocalState.RuntimeDirectory(root), "pending-factory-presence.json"),
+                WorkbenchLineConfigurationStore.PathFor(root),
+                Path.Combine(LocalState.RuntimeDirectory(root), "pending-configuration-observation.json") };
             foreach (var path in paths)
                 if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
                     throw new InvalidDataException("Unenrollment will not remove linked state files.");

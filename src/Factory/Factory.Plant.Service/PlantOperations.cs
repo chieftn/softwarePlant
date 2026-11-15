@@ -8,7 +8,7 @@ namespace Factory.Plant.Service;
 
 public sealed record PlantResult(PlantView Plant, string Revision);
 
-public sealed class PlantOperations(IRecordStore store, Pagination pagination, TimeProvider clock, ApiSettings settings)
+public sealed partial class PlantOperations(IRecordStore store, Pagination pagination, TimeProvider clock, ApiSettings settings)
 {
     private const int Attempts = 3;
 
@@ -250,8 +250,21 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
         if (observed?.EnrollmentId != workbench.EnrollmentId || observed?.AssignmentVersion != workbench.AssignmentVersion)
             observed = null;
         EnrollmentRecord? enrollment = null;
+        ConfigurationObservationRecord? configuration = null;
         if (workbench.EnrollmentId is { } enrollmentId)
+        {
             enrollment = await EnrollmentAsync(enrollmentId, cancellationToken);
+            var configurationRecord = await store.ReadAsync(Records.EnrollmentScope(enrollmentId),
+                "configuration-observation", cancellationToken);
+            if (configurationRecord is not null)
+            {
+                configuration = Records.Require<ConfigurationObservationRecord>(configurationRecord.Record);
+                if (configuration.EnrollmentId != enrollmentId || configuration.ScopeId != Records.EnrollmentScope(enrollmentId))
+                    throw new InvalidOperationException("The stored configuration observation identity is inconsistent.");
+                if (configuration.PlantId is not null && configuration.PlantId != workbench.PlantId)
+                    configuration = null;
+            }
+        }
         var revoked = workbench.AdmissionState == "revoked" ||
             enrollment?.State is "revoking" or "retired" or "retirementNeedsAttention";
         var unassigned = enrollment is not null && (enrollment.AssignedPlantId != workbench.PlantId ||
@@ -261,7 +274,7 @@ public sealed class PlantOperations(IRecordStore store, Pagination pagination, T
         return new("1", workbench.Id, workbench.PlantId, workbench.Name, workbench.Identity,
             revoked ? "revoked" : unassigned ? "unassigned" : workbench.AdmissionState, contact, workbench.CreatedAt, registered?.Registration,
             registered?.RecordedAt, observed?.Presence, observed?.RecordedAt, workbench.EnrollmentId,
-            enrollment?.State, enrollment?.Error);
+            enrollment?.State, enrollment?.Error, configuration?.Observation, configuration?.RecordedAt);
     }
 
     private async Task<StoredRecord> PlantAsync(string plantId, CancellationToken cancellationToken) =>
