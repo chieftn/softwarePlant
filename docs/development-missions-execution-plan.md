@@ -267,11 +267,21 @@ Package/evidence: `src\Factory\artifacts\service\production-lines-plantassign-20
 
 Health is 200; the new plant binding API challenges with 401/Bearer; the removed workbench binding API returns 404; assignment/create pages require sign-in; Entra authorization-code/PKCE and `/signin-oidc` callback are preserved. All 24 settings, both managed identities, Key Vault selector, startup/runtime, VNet/subnet/route-all and authentication fingerprints match preflight. No cloud settings, identities, permissions, data or workbench installation were changed. Authenticated live creation/assignment still requires tester acceptance. SDK/worker execution and quiescing remain deferred.
 
+### Repository Workload v1 Draft
+
+With explicit approval, inspected chieftn/productionOutput1 and opened [chieftn/productionOutput1#2](https://github.com/chieftn/productionOutput1/pull/2) as a draft. The repository initially contained only its README; no product stack or build/test commands existed.
+
+The PR defines `productionLine/workload.json`, its authoring schema, separate Implementation/Alignment instructions, one bounded three-pass/30-minute workflow, independent candidate verification, expected evidence, immutable context and hard-stop/publication boundaries. It documents the distinction from Factory's production-line registry and product/method metadocument. Dependency-free PowerShell 7.4 authoring validation and 22 focused assertions passed; requiring project verification fails explicitly because its command list is not yet configured.
+
+No fake product commands or runtime readiness are claimed. Actual product verification must be agreed and configured; the installed worker must explicitly support the proposed contract and enforce its permissions. The PR is not merged, so Factory's configured `main` source does not yet contain this workload. Client MSI packaging/installation, SDK/worker execution and authentication remain separate pending work.
+
+Published branch: `user/rkessler/production-line-v1-contract`; head commit `c3c634857992dde48faf3e51538f649f88185769`, independently verified on the remote. The draft is open against `main` and contains only eight README/productionLine paths. An optional GitHub CI workflow was omitted rather than requesting additional OAuth workflow permission; the local validation commands remain available. No service deployment, model invocation, worker installation, product implementation or merge was performed in this increment.
+
 | Iteration | State | Evidence / remaining decisions |
 |---|---|---|
 | 1. Line model and management | Service deployed; live CRUD acceptance pending | Contracts, Cosmos records/revisions, owner-authorized API/Razor management, conditional edits and retry receipts. ProductZero is configurable data; live registration remains to perform. |
 | 2. Assignment and discovery | Plant-owned service correction deployed; host upgrade pending | Corrected plant assignment/API/UI deployed as `16a014da-4165-4f06-b61c-f97dfae5fd3b`; old workbench binding route returns 404. Explicit plant assignment and authenticated live acceptance remain. Host discovery/persistence/acknowledgment is built but not installed. Repo workload retrieval/preparation and real in-flight stop controls remain for the worker iteration. Confirm target plant and live contact deadlines. |
-| 3. Repository workload | Planned | Inspect target repo; settle manifest layout, checks, and execution bounds. |
+| 3. Repository workload | Draft PR opened; contract review pending | chieftn/productionOutput1#2 defines the proposed v1 manifest, two agents and bounded workflow. Authoring checks passed; product verification is explicitly unconfigured. Review/merge, actual project checks and worker support remain required before execution. |
 | 4. Bootstrap and readiness | Planned | Verify service-owned WSL feasibility and unattended GitHub/Copilot authentication. |
 | 5. Intake and claims | Planned | Agree issue eligibility/approval convention and durable ownership contract. |
 | 6. Ring execution | Planned | Execute against pinned revisions with independent evidence and bounded feedback. |
