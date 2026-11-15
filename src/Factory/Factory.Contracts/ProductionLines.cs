@@ -27,8 +27,8 @@ public sealed record ProductionLineWriteRequest
             "Source, tasks and policy are required.");
         ContractValidation.Require(Source!.Provider == "github" && Tasks!.Provider == "github-issues",
             "Only github source and github-issues tasks are supported.");
-        Repository(Source.Repository);
-        Repository(Tasks!.Repository);
+        Repository(Source.Repository, "Source repository");
+        Repository(Tasks!.Repository, "Issue repository");
         ContractValidation.Text(Source.BaseBranch, 128, "baseBranch");
         ContractValidation.Require(!Source.BaseBranch.StartsWith('-') &&
             !Source.BaseBranch.Any(char.IsWhiteSpace) && !Source.BaseBranch.Any(char.IsControl) &&
@@ -58,14 +58,14 @@ public sealed record ProductionLineWriteRequest
             "Publication requires shell execution approval.");
     }
 
-    private static void Repository(string value)
+    private static void Repository(string value, string field)
     {
-        ContractValidation.Text(value, 200, "repository");
+        ContractValidation.Text(value, 200, field);
         var parts = value.Split('/');
         ContractValidation.Require(parts.Length == 2 && parts.All(part =>
             part.Length > 0 && part is not ("." or "..") &&
             part.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.')),
-            "repository must be owner/name, not a URL or credential.");
+            $"{field} must be owner/name, not a URL or credential.");
     }
 
     private static void Connection(string value)
@@ -92,7 +92,7 @@ public sealed record ProductionLineAssignment(string SchemaVersion, long Expecte
     }
 }
 
-public sealed record ProductionLineBinding(string SchemaVersion, string PlantId, string WorkbenchId,
+public sealed record ProductionLineBinding(string SchemaVersion, string PlantId,
     long Version, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ProductionLineId);
 
 public sealed record WorkbenchLineConfiguration(string SchemaVersion, string EnrollmentId, string WorkbenchId,

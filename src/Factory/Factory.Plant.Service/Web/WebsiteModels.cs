@@ -10,6 +10,7 @@ public sealed class CreatePlantForm
 
 public sealed record PlantsPage(Page<PlantView> Plants);
 public sealed record WorkbenchesPage(string PlantId, Page<WorkbenchView> Workbenches);
+public sealed record WorkbenchDetailsPage(WorkbenchView Workbench, WorkbenchLineConfiguration? DesiredConfiguration);
 public sealed record EnrollmentsPage(Page<EnrollmentView> Enrollments, IReadOnlyList<PlantView> Plants);
 
 public sealed record ProductionLinesPage(Page<ProductionLineView> Lines);
@@ -17,7 +18,7 @@ public sealed record ProductionLinesPage(Page<ProductionLineView> Lines);
 public sealed class ProductionLineForm
 {
     public string? LineId { get; set; }
-    public string Revision { get; set; } = "";
+    public string? Revision { get; set; }
     public string OperationKey { get; set; } = "";
     public string Name { get; set; } = "";
     public string SourceRepository { get; set; } = "";
@@ -36,8 +37,8 @@ public sealed class ProductionLineForm
     {
         SchemaVersion = "1",
         Name = Name,
-        Source = new("github", SourceRepository, BaseBranch, WorkloadPath, SourceConnection),
-        Tasks = new("github-issues", TaskRepository, TaskConnection,
+        Source = new("github", SourceRepository.Trim(), BaseBranch, WorkloadPath, SourceConnection),
+        Tasks = new("github-issues", TaskRepository.Trim(), TaskConnection,
             (RequiredLabels ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)),
         Policy = new(AllowShellExecution, AllowPublication, MaximumIterations, TimeoutMinutes)
     };
@@ -65,9 +66,6 @@ public sealed class ProductionLineForm
 public sealed class ProductionLineAssignmentForm
 {
     public string PlantId { get; set; } = "";
-    public string WorkbenchId { get; set; } = "";
     public long ExpectedVersion { get; set; }
     public string? ProductionLineId { get; set; }
-    public WorkbenchView? Workbench { get; set; }
-    public WorkbenchLineConfiguration? DesiredConfiguration { get; set; }
 }

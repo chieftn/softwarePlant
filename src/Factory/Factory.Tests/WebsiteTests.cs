@@ -31,12 +31,13 @@ public sealed class WebsiteTests
             ["BaseBranch"] = "main",
             ["WorkloadPath"] = "productionLine",
             ["SourceConnection"] = "github-source",
-            ["TaskRepository"] = "chieftn/productionOutput1",
+            ["TaskRepository"] = "chieftn/productionOutput1 ",
             ["TaskConnection"] = "github-tasks",
             ["RequiredLabels"] = "approved",
             ["MaximumIterations"] = "3",
             ["TimeoutMinutes"] = "30",
-            ["OperationKey"] = Hidden(html, "OperationKey")
+            ["OperationKey"] = Hidden(html, "OperationKey"),
+            ["Revision"] = Hidden(html, "Revision")
         };
         using var noToken = await browser.PostAsync("/production-lines", new FormUrlEncodedContent(form));
         Assert.Equal(HttpStatusCode.BadRequest, noToken.StatusCode);
@@ -45,6 +46,7 @@ public sealed class WebsiteTests
         using var created = await browser.PostAsync("/production-lines", new FormUrlEncodedContent(form));
         Assert.Equal(HttpStatusCode.Redirect, created.StatusCode);
         var line = Assert.Single(app.Store.All<ProductionLineRecord>()).Line;
+        Assert.Equal("chieftn/productionOutput1", line.Definition.Tasks.Repository);
         using var definitionPage = await browser.GetAsync($"/production-lines/{line.Id}");
         Assert.Equal(HttpStatusCode.OK, definitionPage.StatusCode);
         html = await definitionPage.Content.ReadAsStringAsync();
@@ -55,19 +57,37 @@ public sealed class WebsiteTests
         using var edited = await browser.PostAsync($"/production-lines/{line.Id}", new FormUrlEncodedContent(form));
         Assert.Equal(HttpStatusCode.Redirect, edited.StatusCode);
         Assert.Equal("Revised ProductZero", Assert.Single(app.Store.All<ProductionLineRecord>()).Line.Definition.Name);
-        var route = $"/plants/{plant.Id}/workbenches/{enrollment.WorkbenchId}/production-line";
+        var editedRevision = Assert.Single(app.Store.All<ProductionLineRecord>()).Line.Revision;
+        form["Revision"] = "";
+        form["OperationKey"] = Guid.NewGuid().ToString("D");
+        form["Name"] = "Must not overwrite without a revision";
+        using var missingRevision = await browser.PostAsync($"/production-lines/{line.Id}", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.BadRequest, missingRevision.StatusCode);
+        Assert.Contains("A revision is required when updating a line.", await missingRevision.Content.ReadAsStringAsync());
+        Assert.Equal(editedRevision, Assert.Single(app.Store.All<ProductionLineRecord>()).Line.Revision);
+        using var plantPage = await browser.GetAsync($"/plants/{plant.Id}");
+        html = await plantPage.Content.ReadAsStringAsync();
+        Assert.Contains($"/plants/{plant.Id}/production-line", html);
+        Assert.DoesNotContain($"/workbenches/{enrollment.WorkbenchId}/production-line", html);
+        var route = $"/plants/{plant.Id}/production-line";
         using var assignmentPage = await browser.GetAsync(route);
         Assert.Equal(HttpStatusCode.OK, assignmentPage.StatusCode);
         html = await assignmentPage.Content.ReadAsStringAsync();
         var assignment = new Dictionary<string, string>
         {
             ["ExpectedVersion"] = "0",
-            ["ProductionLineId"] = line.Id,
+            ["ProductionLineId"] = $" {line.Id} ",
             ["__RequestVerificationToken"] = Hidden(html, "__RequestVerificationToken")
         };
         using var assigned = await browser.PostAsync(route, new FormUrlEncodedContent(assignment));
         Assert.Equal(HttpStatusCode.Redirect, assigned.StatusCode);
         Assert.Equal(line.Id, Assert.Single(app.Store.All<ProductionLineBindingRecord>()).Binding.ProductionLineId);
+        using var inheritedPage = await browser.GetAsync($"/plants/{plant.Id}/workbenches/{enrollment.WorkbenchId}");
+        html = await inheritedPage.Content.ReadAsStringAsync();
+        Assert.Contains("Configuration is inherited from the plant", html);
+        Assert.Contains(line.Id, html);
+        Assert.Contains("Configuration has not been acknowledged by the workbench.", html);
+        Assert.DoesNotContain("Manage production line", html);
         assignment["ExpectedVersion"] = "1";
         assignment["ProductionLineId"] = "";
         using var revoked = await browser.PostAsync(route, new FormUrlEncodedContent(assignment));
@@ -92,7 +112,7 @@ public sealed class WebsiteTests
                 Reason = "Revocation acknowledged; no execution was started."
             }
         });
-        using var revocationPage = await browser.GetAsync(route);
+        using var revocationPage = await browser.GetAsync($"/plants/{plant.Id}/workbenches/{enrollment.WorkbenchId}");
         Assert.Equal(HttpStatusCode.OK, revocationPage.StatusCode);
         Assert.Contains("Desired configuration acknowledged.", await revocationPage.Content.ReadAsStringAsync());
         using var apiWithCookie = await browser.GetAsync("/v1/production-lines");

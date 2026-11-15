@@ -64,7 +64,7 @@ tags:
   - name: Enrollment
     description: Service-wide device enrollment, one-plant assignment and separate identity retirement.
   - name: ProductionLines
-    description: Owned configuration definitions, immutable revisions and explicit workbench bindings.
+    description: Owned configuration definitions, immutable revisions and plant assignments inherited by workbenches.
 paths:
   /v1/plants:
     get:
@@ -969,14 +969,13 @@ paths:
           $ref: '#/components/responses/ProductionLine'
         default:
           $ref: '#/components/responses/UnexpectedFailure'
-  /v1/plants/{plantId}/workbenches/{workbenchId}/production-line:
+  /v1/plants/{plantId}/production-line:
     parameters:
       - $ref: '#/components/parameters/PlantId'
-      - $ref: '#/components/parameters/WorkbenchId'
     get:
       operationId: getProductionLineBinding
       tags: [ProductionLines]
-      summary: Read the effective line binding under workbench read authority.
+      summary: Read the plant's line assignment under plant read authority.
       responses:
         '200':
           $ref: '#/components/responses/ProductionLineBinding'
@@ -985,13 +984,16 @@ paths:
     put:
       operationId: assignProductionLine
       tags: [ProductionLines]
-      summary: Assign or revoke one configured line for an active plant workbench.
+      summary: Assign or revoke one configured line for an active plant.
       description: |
         Requires ownership of the plant and, when assigning, the line. Uses
         expectedVersion, not an idempotency key. Omit productionLineId to revoke.
-        Bindings are fenced by enrollment and plant membership version; moving
-        away and back never reactivates an old binding. Revocation disables old
-        configuration; acceptance does not confirm remote termination.
+        The versioned binding is stored in the plant partition, independent of
+        device enrollment. Active enrolled members inherit it, including devices
+        assigned later. Removal or replacement revokes the old configuration for
+        every member. Device moves revoke that device's old membership and
+        configuration; the destination's current assignment is inherited under
+        the new membership version. Acceptance does not confirm remote termination.
       requestBody:
         required: true
         content:
@@ -1308,15 +1310,13 @@ components:
     ProductionLineBinding:
       type: object
       additionalProperties: false
-      required: [schemaVersion, plantId, workbenchId, version, productionLineId]
+      required: [schemaVersion, plantId, version, productionLineId]
       properties:
         schemaVersion:
           type: string
           enum: ['1']
         plantId:
           $ref: '#/components/schemas/PlantId'
-        workbenchId:
-          $ref: '#/components/schemas/WorkbenchId'
         version:
           type: integer
           format: int64
@@ -1350,6 +1350,7 @@ components:
           type: integer
           format: int64
           minimum: 0
+          description: Current plant's production-line assignment version; zero while unassigned from a plant.
         productionLine:
           type: object
           nullable: true

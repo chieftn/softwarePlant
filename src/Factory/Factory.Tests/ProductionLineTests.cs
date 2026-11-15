@@ -10,6 +10,24 @@ namespace Factory.Tests;
 
 public sealed class ProductionLineTests
 {
+    [Theory]
+    [InlineData("source", "Source repository")]
+    [InlineData("tasks", "Issue repository")]
+    public async Task InvalidRepositoryErrorsIdentifyTheField(string field, string expectedField)
+    {
+        using var app = new ApiTestApplication();
+        using var owner = app.Human();
+        var definition = Definition();
+        definition = field == "source"
+            ? definition with { Source = definition.Source with { Repository = "https://github.com/product/source" } }
+            : definition with { Tasks = definition.Tasks with { Repository = "https://github.com/product/tasks" } };
+        using var response = await SendAsync(owner, HttpMethod.Post, "/v1/production-lines", definition, Key());
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        Assert.StartsWith(expectedField, problem.GetProperty("detail").GetString());
+        Assert.Empty(app.Store.All<ProductionLineRecord>());
+    }
+
     [Fact]
     public async Task DefinitionsAreOwnedConfigurableRevisionedAndRetrySafe()
     {
@@ -73,7 +91,7 @@ public sealed class ProductionLineTests
         var (plant, _) = await CreateAsync(owner, "Plant");
         var enrollment = SeedMember(app, plant.Id);
         var line = await CreateLineAsync(owner);
-        var path = $"/v1/plants/{plant.Id}/workbenches/{enrollment.WorkbenchId}/production-line";
+        var path = $"/v1/plants/{plant.Id}/production-line";
         using var assigned = await owner.PutAsJsonAsync(path, new ProductionLineAssignment("1", 0, line.Id.ToUpperInvariant()));
         assigned.EnsureSuccessStatusCode();
         using var repeat = await owner.PutAsJsonAsync(path, new ProductionLineAssignment("1", 0, line.Id));
@@ -118,9 +136,76 @@ public sealed class ProductionLineTests
             new EnrollmentAssignment("1", 2, plant.Id));
         returned.EnsureSuccessStatusCode();
         var afterReturn = (await daemon.GetFromJsonAsync<WorkbenchLineConfiguration>(configPath))!;
-        Assert.Null(afterReturn.ProductionLine);
+        Assert.Equal(line.Id, afterReturn.ProductionLine!.Id);
         Assert.Equal(3, afterReturn.AssignmentVersion);
         Assert.Equal(line.Id, Assert.Single(app.Store.All<ProductionLineBindingRecord>()).Binding.ProductionLineId);
+        using var oldMembership = await SendAsync(daemon, HttpMethod.Put, configPath + "-observation", observation, Key());
+        await ProblemAsync(oldMembership, 409, "configuration_changed");
+    }
+
+    [Fact]
+    public async Task PlantAssignmentPrecedesEnrollmentAndAllMembersInheritChanges()
+    {
+        using var app = new ApiTestApplication();
+        using var owner = app.Human();
+        using var firstMachine = app.Daemon();
+        var secondIdentity = new EntraApplicationPrincipal(ApiTestApplication.Tenant, Key(), Key());
+        using var secondMachine = app.Daemon(secondIdentity.ObjectId, secondIdentity.ClientId);
+        var (plant, _) = await CreateAsync(owner, "Plant without workbenches");
+        var firstLine = await CreateLineAsync(owner);
+        var secondLine = await CreateLineAsync(owner, Definition() with { Name = "Replacement line" });
+        var path = $"/v1/plants/{plant.Id}/production-line";
+        using var assigned = await owner.PutAsJsonAsync(path, new ProductionLineAssignment("1", 0, firstLine.Id));
+        assigned.EnsureSuccessStatusCode();
+        var first = SeedMember(app, plant.Id);
+        var second = SeedMember(app, plant.Id, secondIdentity);
+        app.Store.Seed(new ProductionLineBindingRecord
+        {
+            Id = "production-line",
+            ScopeId = Records.WorkbenchScope(plant.Id, first.WorkbenchId),
+            PlantId = plant.Id,
+            Binding = new("1", plant.Id, 7, secondLine.Id)
+        });
+        var firstPath = $"/v1/enrollments/{first.Id}/configuration";
+        var secondPath = $"/v1/enrollments/{second.Id}/configuration";
+        var firstConfig = (await firstMachine.GetFromJsonAsync<WorkbenchLineConfiguration>(firstPath))!;
+        var secondConfig = (await secondMachine.GetFromJsonAsync<WorkbenchLineConfiguration>(secondPath))!;
+        Assert.Equal(firstLine.Id, firstConfig.ProductionLine!.Id);
+        Assert.Equal(firstLine.Id, secondConfig.ProductionLine!.Id);
+        Assert.Equal(firstConfig.BindingVersion, secondConfig.BindingVersion);
+        using var sibling = await firstMachine.GetAsync(secondPath);
+        await ProblemAsync(sibling, 403, "forbidden");
+        using var legacyWrite = await owner.PutAsJsonAsync(
+            $"/v1/plants/{plant.Id}/workbenches/{first.WorkbenchId}/production-line",
+            new ProductionLineAssignment("1", 0, secondLine.Id));
+        Assert.Equal(HttpStatusCode.NotFound, legacyWrite.StatusCode);
+
+        using var replaced = await owner.PutAsJsonAsync(path, new ProductionLineAssignment("1", 1, secondLine.Id));
+        replaced.EnsureSuccessStatusCode();
+        foreach (var (machine, configurationPath) in new[] { (firstMachine, firstPath), (secondMachine, secondPath) })
+        {
+            var config = (await machine.GetFromJsonAsync<WorkbenchLineConfiguration>(configurationPath))!;
+            Assert.Equal(secondLine.Id, config.ProductionLine!.Id);
+            Assert.Equal(2, config.BindingVersion);
+        }
+        using var oldObservation = await SendAsync(firstMachine, HttpMethod.Put, firstPath + "-observation",
+            Observation(firstConfig), Key());
+        await ProblemAsync(oldObservation, 409, "configuration_changed");
+        using var staleAssignment = await owner.PutAsJsonAsync(path, new ProductionLineAssignment("1", 0, firstLine.Id));
+        await ProblemAsync(staleAssignment, 409, "line_assignment_changed");
+        using var revoked = await owner.PutAsJsonAsync(path, new ProductionLineAssignment("1", 2));
+        revoked.EnsureSuccessStatusCode();
+        foreach (var (machine, configurationPath) in new[] { (firstMachine, firstPath), (secondMachine, secondPath) })
+        {
+            var config = (await machine.GetFromJsonAsync<WorkbenchLineConfiguration>(configurationPath))!;
+            Assert.Null(config.ProductionLine);
+            Assert.Equal(3, config.BindingVersion);
+        }
+        var binding = Assert.Single(app.Store.All<ProductionLineBindingRecord>(),
+            record => record.ScopeId == Records.PlantScope(plant.Id));
+        Assert.Null(binding.Binding.ProductionLineId);
+        Assert.Equal(secondLine.Id, Assert.Single(app.Store.All<ProductionLineBindingRecord>(),
+            record => record.ScopeId == Records.WorkbenchScope(plant.Id, first.WorkbenchId)).Binding.ProductionLineId);
     }
 
     [Fact]
@@ -134,7 +219,7 @@ public sealed class ProductionLineTests
         var enrollment = SeedMember(app, plant.Id);
         var owned = await CreateLineAsync(owner);
         var foreign = await CreateLineAsync(other);
-        var path = $"/v1/plants/{plant.Id}/workbenches/{enrollment.WorkbenchId}/production-line";
+        var path = $"/v1/plants/{plant.Id}/production-line";
         using var wrongLine = await owner.PutAsJsonAsync(path, new ProductionLineAssignment("1", 0, foreign.Id));
         await ProblemAsync(wrongLine, 403, "forbidden");
         using var wrongPlant = await other.PutAsJsonAsync(path, new ProductionLineAssignment("1", 0, foreign.Id));
@@ -191,8 +276,9 @@ public sealed class ProductionLineTests
         return (await created.Content.ReadFromJsonAsync<ProductionLineView>())!;
     }
 
-    internal static EnrollmentRecord SeedMember(ApiTestApplication app, string plantId)
+    internal static EnrollmentRecord SeedMember(ApiTestApplication app, string plantId, EntraApplicationPrincipal? identity = null)
     {
+        identity ??= new(ApiTestApplication.Tenant, ApiTestApplication.DaemonId, ApiTestApplication.DaemonClientId);
         var id = Key();
         var installation = Key();
         var enrollment = new EnrollmentRecord
@@ -216,14 +302,15 @@ public sealed class ProductionLineTests
             Digest = "fixture",
             UpdatedAt = app.Clock.Now,
             AuthorizedAt = app.Clock.Now,
-            ClientId = ApiTestApplication.DaemonClientId,
-            ServicePrincipalId = ApiTestApplication.DaemonId
+            ClientId = identity.ClientId,
+            ServicePrincipalId = identity.ObjectId
         };
         app.Store.Seed(enrollment);
         app.Store.Seed(WorkbenchApiTests.Workbench(app, plantId, enrollment.WorkbenchId) with
         {
             EnrollmentId = id,
-            AssignmentVersion = 1
+            AssignmentVersion = 1,
+            Identity = identity
         });
         return enrollment;
     }

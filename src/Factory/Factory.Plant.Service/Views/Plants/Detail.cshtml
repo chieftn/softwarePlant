@@ -8,6 +8,11 @@
     <span class="badge">@Model.State</span>
 </div>
 <section class="panel">
+    <h2>Production line</h2>
+    <p>Assign this plant's production line. Active enrolled workbenches inherit its configuration.</p>
+    <a class="button" href="/plants/@Model.Id/production-line">Manage production line</a>
+</section>
+<section class="panel">
     <h2>Workbenches</h2>
     <p>View this plant's workbench registrations and last reported presence. Scoped workbench access is checked separately.</p>
     <a class="button" asp-controller="Workbenches" asp-action="Index" asp-route-plantId="@Model.Id">View workbenches</a>

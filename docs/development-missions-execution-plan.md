@@ -6,7 +6,7 @@ Companion: [Development missions context](development-missions-context.md).
 
 ## Outcome
 
-Define production lines through the Factory web service and persist them in Cosmos DB. Assign a line to approved execution infrastructure. Have an assigned workbench obtain a versioned repository workload, prepare its supported execution environment, and process approved GitHub issues through a bounded Copilot SDK inner loop.
+Define production lines through the Factory web service and persist them in Cosmos DB. Assign a line to a plant; its active enrolled workbenches inherit the configuration. Have an assigned workbench obtain a versioned repository workload, prepare its supported execution environment, and process approved GitHub issues through a bounded Copilot SDK inner loop.
 
 The first configured line is **ProductZero**, using [chieftn/productionOutput1](https://github.com/chieftn/productionOutput1). Its workload lives in the repository's `productionLine` folder. ProductZero is data entered through the supported service operations, not a hardcoded line, startup seed, special repository check, or built-in prompt.
 
@@ -23,7 +23,7 @@ Success means one approved issue produces a verified candidate, execution eviden
 
 Cosmos is authoritative for the registered line configuration. Git is authoritative for the referenced workload contents. Store the resolved workload identity and digest with each mission; do not depend on a mutable branch or folder during execution.
 
-The existing Factory service hosts multiple logical plants. This plan uses "assign to a Factory" to mean making the line available through an approved binding to a plant and its workbench resources, not introducing another infrastructure hierarchy. Confirm the actual target plant during the assignment iteration.
+The existing Factory service hosts multiple logical plants. The plant owns the production-line assignment; workbenches inherit it through their existing plant membership, rather than receive individual line bindings. This does not introduce another infrastructure hierarchy. Confirm the actual target plant during the assignment iteration.
 
 ## First Design Slice: Configuration Synchronization
 
@@ -40,7 +40,7 @@ Assignment is not a command to invoke Copilot. A retrieved definition is not pro
 
 The service owns the desired configuration and current authorization. The workbench reports what it has actually applied. Do not use one status field to imply both.
 
-Identify configuration by enrollment identity/generation, plant membership version, line binding version, line configuration revision, and resolved workload commit/digest. Reports carry the identity they describe; stale acknowledgments cannot make a superseded or revoked configuration ready. Machine connection/presence remains separate.
+Identify configuration by enrollment identity/generation, plant membership version, plant's line binding version, line configuration revision, and resolved workload commit/digest. Reports carry the identity they describe; stale acknowledgments cannot make a superseded or revoked configuration ready. Machine connection/presence remains separate.
 
 | Observed configuration state | Meaning | Permitted progression |
 |---|---|---|
@@ -57,7 +57,7 @@ The first implementation should demonstrate assigned -> preparing -> ready or bl
 
 ### Immediate Revocation and Hard Stop
 
-For v1, unassigning a workbench from its plant revokes the old plant/line configuration and requires termination of owned in-flight work. Moving the workbench to another plant also revokes its old configuration. Removing the applicable line binding has the same effect for that line. Retirement and permission revocation remain additional reasons to deny execution.
+For v1, unassigning a workbench from its plant revokes the old plant/line configuration and requires termination of owned in-flight work. Moving the workbench to another plant also revokes its old configuration. Removing or replacing the plant's line assignment revokes the old configuration for all its workbenches. A joining or returning device inherits the plant's current line under its new membership version, never reusing an old memo. Retirement and permission revocation remain additional reasons to deny execution.
 
 1. The service commits the authoritative membership/binding change. Old configuration is immediately ineligible for new claims and credential grants; old readiness reports cannot restore it.
 2. On observing revocation, the workbench stops accepting work, invalidates the old configuration, and cancels preparation and active execution. For v1, it stops owned SDK/worker processes rather than waiting for the task to finish.
@@ -106,10 +106,10 @@ Do not implement quiesce implicitly as v1 unassignment behavior. The current req
 
 ## Iteration 2: Line Assignment and Workbench Discovery
 
-**Deliver:** An approved line-to-plant/resource binding and machine-readable configuration discovery.
+**Deliver:** An approved line-to-plant assignment and machine-readable configuration discovery.
 
-- Confirm the target plant and the initial authorized workbench. Support explicit bindings without assuming every workbench in a plant can execute every line.
-- Add web/API operations to assign, inspect, and remove a line binding under scoped authority.
+- Confirm the target plant. Assign the line to that plant once; active enrolled workbenches inherit its configuration. Readiness, capabilities and local policy still determine whether an individual workbench can execute it.
+- Add plant web/API operations to assign, inspect, and remove its line binding under scoped authority, even before any workbench joins.
 - Extend the workbench's existing authenticated assignment discovery to return authorized line configuration and binding revisions.
 - Return desired configuration separately from observed applied revision/readiness. Use the configuration state machine above; reject stale acknowledgments.
 - Recheck current enrollment, plant membership, line binding, and resource authority. A device in another plant must not obtain the line's execution configuration.
@@ -211,10 +211,10 @@ Before implementation, agree the first iteration's bounded scope. Obtain separat
 
 ### Built Configuration-Delivery Increment
 
-The user authorized building production-line definitions, assignments, and workbench configuration discovery. This increment is implemented locally; no service deployment, Cosmos live data creation, repository publication, or test-machine upgrade has been performed.
+The user authorized building production-line definitions, assignments, and workbench configuration discovery. The web service was subsequently deployed with explicit approval; the host changes remain local. No production-line data creation, repository publication, or test-machine upgrade has been performed.
 
 - The website/API can create and update owned line configuration in Cosmos, retaining immutable revisions and retry receipts. The service registration contract references the repository workload; it does not replace the existing production-method metadocument schema.
-- Plant owners can assign a line they own to an active workbench. One line is configured per workbench initially; the same line can bind to multiple approved resources. Membership and binding versions prevent an old assignment from reactivating after a move or unassignment.
+- The initially deployed assignment was incorrectly scoped to individual workbenches. The plant-owned correction below supersedes that model locally; it is not yet deployed.
 - The host discovers desired configuration through its Factory connection, persists it under `runtime\line-configuration.json`, and durably acknowledges its membership/binding/line revision. The website distinguishes desired configuration from the observed acknowledgment.
 - Received line configuration reports `blocked`: repository workload retrieval, unattended credentials, prerequisite preparation, and SDK/worker execution are not installed. No line reports `unconfigured`; the service rejects `ready` observations in this slice.
 - Revocation clears the local configuration on discovery. Plant membership revocation is applied locally before subsequent configuration/report requests, so a failed request cannot leave the old memo active. Pending acknowledgments are retried or discarded when superseded; old receipts cannot overwrite newer observations.
@@ -223,10 +223,50 @@ The user authorized building production-line definitions, assignments, and workb
 
 Validation: 171 Factory regression tests passed. After final changes, 19 focused management, synchronization, browser, contract, and uninstall cases passed; changed C# whitespace verification and `git diff --check` passed. These checks use the existing isolated test store/HTTP harness, not live Cosmos, GitHub, WSL, or a deployed workbench.
 
+### Web-Service Deployment
+
+Initially deployed November 14, 2026 at 17:32 Pacific to `https://factory-prod-qm3qqqsg45-web.azurewebsites.net`. Deployment `984a5ecf-6143-4a98-9949-07683fcb131a` reached `RuntimeSuccessful`; the save-form correction below supersedes it. Source commit: `7e093205291285ea5aa2eb4306a8a3aa1ea6e873`.
+
+The Linux self-contained package passed 15 focused predeployment checks. Health/homepage return 200; the new line, binding, configuration and observation API routes return 401/Bearer without authentication; the production-line page requires sign-in; Entra authorization-code/PKCE and the existing callback remain correct. All 24 settings, both managed identities, Key Vault selector, startup command, VNet/subnet/route-all and Easy Auth configuration were preserved. No directory grants or infrastructure changes were made.
+
+Evidence and package: `src\Factory\artifacts\service\production-lines-20261114-001`. The ZIP is 58,076,155 bytes, SHA-256 `9E67E60B2210C276930B19BDFA027772CDACC2EBA0B2E7E7ED8FDF6DA0250F2D`; all 387 entries match the publish output. `deployment-preflight.json`, `deployment-result.json` and `release-handoff.json` retain nonsecret evidence. Authenticated live line creation/editing/assignment has not been verified; no ProductZero record was created by deployment.
+
+The existing workbench was not upgraded. Worker installation is the next separate step; deployment does not enable SDK execution or issue intake.
+
+### Save-Form Correction
+
+The tester's first line creation failed with "The Revision field is required." The create form submits an empty hidden `Revision`; the nonnullable form property incorrectly made MVC require it. The original browser test omitted that hidden field and missed the real submission.
+
+The form revision is now optional for creation and explicitly required for updates. The regression submits the actual hidden field and also confirms that a revisionless edit cannot overwrite a line. The failing case was reproduced before the fix; two focused browser/revision checks and formatting/diff checks passed afterward.
+
+With explicit approval, deployed the correction at 20:05 Pacific on November 14, 2026. Current active deployment: `6ef2d3d3-aaac-4d13-8a0b-9763b77b039f`, `RuntimeSuccessful`. All settings, identities, networking and authentication were preserved; health, protected routes and browser sign-in passed. Authenticated live creation still requires the tester's retry; the workbench remains unchanged.
+
+Package/evidence: `src\Factory\artifacts\service\production-lines-savefix-20261114-001`. ZIP size 58,076,188 bytes; SHA-256 `E586C75ED777731C0BBFEAEA1A2784CBB429BC8E9EB708F52A4702CF9BE639BB`; 387 verified entries. Source is commit `7e093205291285ea5aa2eb4306a8a3aa1ea6e873` plus the uncommitted save-form correction; `release-handoff.json` records the source patch and assembly hashes.
+
+### Repository Input Correction (Local Only)
+
+The next form failure was surrounding whitespace in a repository input. Both repository names were valid; the generic validator message did not identify which field failed. The web form now trims source/issue repository inputs, and validation errors explicitly name "Source repository" or "Issue repository". URL/credential rejection remains unchanged. Three failing regression cases were reproduced, then four focused browser/definition checks and formatting/diff checks passed.
+
+The user declined deploying this correction. It remains local; the live deployment is still `6ef2d3d3-aaac-4d13-8a0b-9763b77b039f`. Until a later approved deployment, remove surrounding whitespace from the live form's repository inputs. No service settings, identities, or workbench installation changed.
+
+### Plant-Owned Assignment Correction (Local Only)
+
+The user rejected individual workbench line assignments and explicitly authorized correcting the model. A production line is now assigned once to a plant. Its active enrolled workbenches inherit the current configuration, including devices assigned later; the plant can be configured before it has any workbenches.
+
+The binding and its audit now live in the plant settings partition, with a conditional plant write and monotonically increasing binding version. Web/API assignment is at `/plants/{plantId}/production-line` and `/v1/plants/{plantId}/production-line`. The plant page owns the management link; each workbench detail shows inherited desired configuration and its own acknowledgment. Enrollment/membership fencing remains separate from the shared plant binding.
+
+Removing or replacing the plant's line revokes the old configuration for all members. Moving/unassigning a device revokes its old memo; joining or returning inherits the destination's current line under a new membership version, not an old authorization. The existing host synchronization already handles this boundary, including a destination with a lower plant-binding version.
+
+The old workbench-scoped assignment routes are removed, not silently widened. Existing workbench-partition records are retained but ignored; no per-device binding is promoted to plant-wide authority. Explicitly assign the plant after an approved deployment. The configuration-discovery host increment has not been installed, so deploy the corrected service before its first upgrade.
+
+Focused production-line, real-client synchronization, browser, connection, Cosmos serialization and OpenAPI checks passed, along with changed-C# whitespace verification and `git diff --check`. Regressions cover assignment before enrollment, multiple distinct machine identities inheriting changes, shared revocation, rejected stale assignments/observations, ignored legacy bindings/routes, cross-plant moves and returns, and the plant-based browser flow. These are isolated checks, not live deployment or SDK/worker termination acceptance.
+
+This correction is local only. The live deployment remains `6ef2d3d3-aaac-4d13-8a0b-9763b77b039f`; no cloud settings, identities, permissions, data or workbench installation were changed. SDK/worker execution and quiescing remain deferred.
+
 | Iteration | State | Evidence / remaining decisions |
 |---|---|---|
-| 1. Line model and management | Implemented locally | Contracts, Cosmos records/revisions, owner-authorized API/Razor management, conditional edits and retry receipts. ProductZero is configurable data; live registration/deployment remain unapproved. |
-| 2. Assignment and discovery | Configuration delivery implemented locally | Versioned explicit workbench bindings, machine discovery, durable blocked/unconfigured acknowledgments, and configuration revocation. Repo workload retrieval/preparation and real in-flight stop controls remain for the worker iteration. Confirm target plant/workbench and live contact deadlines. |
+| 1. Line model and management | Service deployed; live CRUD acceptance pending | Contracts, Cosmos records/revisions, owner-authorized API/Razor management, conditional edits and retry receipts. ProductZero is configurable data; live registration remains to perform. |
+| 2. Assignment and discovery | Plant-owned correction local; deployment and host upgrade pending | Live service still has the original workbench-scoped bindings. Corrected plant assignments are inherited through configuration discovery. Host discovery/persistence/acknowledgment is built but not installed. Repo workload retrieval/preparation and real in-flight stop controls remain for the worker iteration. Confirm target plant and live contact deadlines. |
 | 3. Repository workload | Planned | Inspect target repo; settle manifest layout, checks, and execution bounds. |
 | 4. Bootstrap and readiness | Planned | Verify service-owned WSL feasibility and unattended GitHub/Copilot authentication. |
 | 5. Intake and claims | Planned | Agree issue eligibility/approval convention and durable ownership contract. |

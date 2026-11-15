@@ -23,7 +23,7 @@ public sealed class ProductionLineSynchronizationTests : IDisposable
         var enrollment = SeedMember(app, plant.Id);
         var binding = Configure(enrollment);
         var line = await CreateLineAsync(owner);
-        var assignmentPath = $"/v1/plants/{plant.Id}/workbenches/{enrollment.WorkbenchId}/production-line";
+        var assignmentPath = $"/v1/plants/{plant.Id}/production-line";
         using var assigned = await owner.PutAsJsonAsync(assignmentPath, new ProductionLineAssignment("1", 0, line.Id));
         assigned.EnsureSuccessStatusCode();
         using var machine = new HttpClient(new LostObservationResponse(app.Server.CreateHandler())) { BaseAddress = new Uri("http://localhost") };
@@ -62,7 +62,7 @@ public sealed class ProductionLineSynchronizationTests : IDisposable
         var enrollment = SeedMember(app, plant.Id);
         var binding = Configure(enrollment);
         var line = await CreateLineAsync(owner);
-        using var assigned = await owner.PutAsJsonAsync($"/v1/plants/{plant.Id}/workbenches/{enrollment.WorkbenchId}/production-line",
+        using var assigned = await owner.PutAsJsonAsync($"/v1/plants/{plant.Id}/production-line",
             new ProductionLineAssignment("1", 0, line.Id));
         assigned.EnsureSuccessStatusCode();
         var handler = new ConfigurationOutage(app.Server.CreateHandler());
@@ -82,6 +82,55 @@ public sealed class ProductionLineSynchronizationTests : IDisposable
         handler.Fail = false;
         await connection.PublishAsync(CancellationToken.None);
         Assert.Equal(2, Assert.Single(app.Store.All<ConfigurationObservationRecord>()).Observation.AssignmentVersion);
+    }
+
+    [Fact]
+    public async Task MovingPlantsInheritsDestinationConfigurationWithoutReusingOldMembership()
+    {
+        using var app = new ApiTestApplication();
+        using var owner = app.Human();
+        using var admin = app.Client(app.Token(ApiTestApplication.OwnerId, ["Factory.User", ApiCaller.EnrollmentAdministratorRole]));
+        var (firstPlant, _) = await CreateAsync(owner, "First plant");
+        var (secondPlant, _) = await CreateAsync(owner, "Second plant");
+        var enrollment = SeedMember(app, firstPlant.Id);
+        var binding = Configure(enrollment);
+        var firstLine = await CreateLineAsync(owner);
+        var secondLine = await CreateLineAsync(owner, Definition() with { Name = "Destination line" });
+        var firstPath = $"/v1/plants/{firstPlant.Id}/production-line";
+        using var assigned = await owner.PutAsJsonAsync(firstPath, new ProductionLineAssignment("1", 0, firstLine.Id));
+        assigned.EnsureSuccessStatusCode();
+        using var revoked = await owner.PutAsJsonAsync(firstPath, new ProductionLineAssignment("1", 1));
+        revoked.EnsureSuccessStatusCode();
+        using var reassigned = await owner.PutAsJsonAsync(firstPath, new ProductionLineAssignment("1", 2, firstLine.Id));
+        reassigned.EnsureSuccessStatusCode();
+        using var destination = await owner.PutAsJsonAsync($"/v1/plants/{secondPlant.Id}/production-line",
+            new ProductionLineAssignment("1", 0, secondLine.Id));
+        destination.EnsureSuccessStatusCode();
+        using var machine = app.Client();
+        var connection = new WorkbenchPlantConnection(Transport(app, machine), binding, "test-release", root);
+        await connection.PublishAsync(CancellationToken.None);
+        var oldConfiguration = WorkbenchLineConfigurationStore.Read(root, binding)!.Configuration;
+        Assert.Equal(3, oldConfiguration.BindingVersion);
+        using var moved = await admin.PutAsJsonAsync($"/v1/enrollments/{enrollment.Id}/assignment",
+            new EnrollmentAssignment("1", 1, secondPlant.Id));
+        moved.EnsureSuccessStatusCode();
+        await connection.PublishAsync(CancellationToken.None);
+        var current = WorkbenchLineConfigurationStore.Read(root, binding)!.Configuration;
+        Assert.Equal(secondPlant.Id, current.PlantId);
+        Assert.Equal(secondLine.Id, current.ProductionLine!.Id);
+        Assert.Equal(2, current.AssignmentVersion);
+        Assert.Equal(1, current.BindingVersion);
+        Assert.Throws<InvalidDataException>(() => WorkbenchLineConfigurationStore.Apply(root, binding, oldConfiguration));
+        Assert.Equal(secondLine.Id, WorkbenchLineConfigurationStore.Read(root, binding)!.Configuration.ProductionLine!.Id);
+        using var returned = await admin.PutAsJsonAsync($"/v1/enrollments/{enrollment.Id}/assignment",
+            new EnrollmentAssignment("1", 2, firstPlant.Id));
+        returned.EnsureSuccessStatusCode();
+        await connection.PublishAsync(CancellationToken.None);
+        current = WorkbenchLineConfigurationStore.Read(root, binding)!.Configuration;
+        Assert.Equal(firstLine.Id, current.ProductionLine!.Id);
+        Assert.Equal(3, current.AssignmentVersion);
+        Assert.Equal(3, current.BindingVersion);
+        Assert.Equal(3, Assert.Single(app.Store.All<ConfigurationObservationRecord>()).Observation.AssignmentVersion);
     }
 
     [Fact]

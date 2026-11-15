@@ -1,29 +1,30 @@
-@model WorkbenchView
+@model WorkbenchDetailsPage
 @{
-    ViewData["Title"] = Model.Name;
+    var workbench = Model.Workbench;
+    ViewData["Title"] = workbench.Name;
 }
-<p><a asp-action="Index" asp-route-plantId="@Model.PlantId">Back to workbenches</a></p>
+<p><a asp-action="Index" asp-route-plantId="@workbench.PlantId">Back to workbenches</a></p>
 <div class="page-heading">
-    <div><p class="eyebrow">Workbench</p><h1>@Model.Name</h1></div>
-    <a class="button secondary" asp-action="Detail" asp-route-plantId="@Model.PlantId" asp-route-workbenchId="@Model.Id">Refresh</a>
+    <div><p class="eyebrow">Workbench</p><h1>@workbench.Name</h1></div>
+    <a class="button secondary" asp-action="Detail" asp-route-plantId="@workbench.PlantId" asp-route-workbenchId="@workbench.Id">Refresh</a>
 </div>
 <section class="panel">
     <h2>Status</h2>
     <dl>
-        <dt>Admission</dt><dd>@Model.AdmissionState</dd>
-        <dt>Contact</dt><dd>@Model.ContactState</dd>
-        <dt>Reported availability</dt><dd>@(Model.Presence?.Status ?? "Not reported")</dd>
-        <dt>Reported reason</dt><dd>@(Model.Presence?.Reason ?? "None")</dd>
-        <dt>Last contact (UTC)</dt><dd>@(Model.LastSeenAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</dd>
+        <dt>Admission</dt><dd>@workbench.AdmissionState</dd>
+        <dt>Contact</dt><dd>@workbench.ContactState</dd>
+        <dt>Reported availability</dt><dd>@(workbench.Presence?.Status ?? "Not reported")</dd>
+        <dt>Reported reason</dt><dd>@(workbench.Presence?.Reason ?? "None")</dd>
+        <dt>Last contact (UTC)</dt><dd>@(workbench.LastSeenAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</dd>
     </dl>
     <p class="muted">Presence is a report, not a capacity reservation or a guarantee that a disconnected process has stopped.</p>
 </section>
-@if (Model.EnrollmentId is { } enrollmentId)
+@if (workbench.EnrollmentId is { } enrollmentId)
 {
     <section class="panel">
         <h2>Plant membership</h2>
-        <p>Enrollment: <code>@enrollmentId</code>. State: @(Model.EnrollmentState ?? "unknown").</p>
-        @if (Model.EnrollmentError is { } error)
+        <p>Enrollment: <code>@enrollmentId</code>. State: @(workbench.EnrollmentState ?? "unknown").</p>
+        @if (workbench.EnrollmentError is { } error)
         {
             <p role="alert">@error</p>
         }
@@ -34,12 +35,38 @@
 }
 <section class="panel">
     <h2>Production line</h2>
-    <p>Assign or revoke a production-line configuration and inspect the workbench's last acknowledgment.</p>
-    <a class="button" href="/plants/@Model.PlantId/workbenches/@Model.Id/production-line">Manage production line</a>
+    <p>Configuration is inherited from the plant, not assigned to this workbench individually.
+        <a href="/plants/@workbench.PlantId/production-line">View plant production-line assignment</a>.</p>
+    <p>Desired line: @(Model.DesiredConfiguration?.ProductionLine?.Definition.Name ?? "None")
+        <code>@(Model.DesiredConfiguration?.ProductionLine?.Id)</code>.
+        Desired line revision: <code>@(Model.DesiredConfiguration?.ProductionLine?.Revision ?? "None")</code>.
+        Desired membership / plant binding versions: @(Model.DesiredConfiguration?.AssignmentVersion.ToString() ?? "Not active")
+        / @(Model.DesiredConfiguration?.BindingVersion.ToString() ?? "Not active").</p>
+    @if (workbench.ConfigurationObservation is { } observed)
+    {
+        var current = Model.DesiredConfiguration is { } desired &&
+            observed.AssignmentVersion == desired.AssignmentVersion && observed.BindingVersion == desired.BindingVersion &&
+            observed.ProductionLineId == desired.ProductionLine?.Id && observed.ProductionLineRevision == desired.ProductionLine?.Revision;
+        <p>@(current ? "Desired configuration acknowledged." : "Awaiting acknowledgment of current configuration or revocation.")</p>
+        <dl>
+            <dt>Observed state</dt><dd>@observed.State</dd>
+            <dt>Reason</dt><dd>@observed.Reason</dd>
+            <dt>Observed line</dt><dd><code>@(observed.ProductionLineId ?? "None")</code></dd>
+            <dt>Observed line revision</dt><dd><code>@(observed.ProductionLineRevision ?? "None")</code></dd>
+            <dt>Observed membership / plant binding versions</dt><dd>@observed.AssignmentVersion / @observed.BindingVersion</dd>
+            <dt>Observed (UTC)</dt><dd>@workbench.ConfigurationObservedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss")</dd>
+        </dl>
+    }
+    else
+    {
+        <p>Configuration has not been acknowledged by the workbench.</p>
+    }
+    <p class="muted">An acknowledgment describes its reported revision, not current authorization or proof that an offline process has stopped.
+        Execution readiness remains unavailable.</p>
 </section>
 <section class="panel">
     <h2>Registration</h2>
-    @if (Model.Registration is { } registration)
+    @if (workbench.Registration is { } registration)
     {
         <dl>
             <dt>Machine</dt><dd>@registration.MachineName</dd>
@@ -48,7 +75,7 @@
             <dt>Protocol</dt><dd>@registration.ProtocolVersion</dd>
             <dt>Assignment schemas</dt><dd>@string.Join(", ", registration.AssignmentSchemaVersions)</dd>
             <dt>Capabilities</dt><dd>@string.Join(", ", registration.Capabilities)</dd>
-            <dt>Registered (UTC)</dt><dd>@Model.RegisteredAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss")</dd>
+            <dt>Registered (UTC)</dt><dd>@workbench.RegisteredAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss")</dd>
         </dl>
     }
     else
@@ -59,10 +86,10 @@
 <section class="panel">
     <h2>Identity</h2>
     <dl>
-        <dt>Workbench ID</dt><dd><code>@Model.Id</code></dd>
-        <dt>Plant ID</dt><dd><code>@Model.PlantId</code></dd>
-        <dt>Tenant ID</dt><dd><code>@Model.Identity.TenantId</code></dd>
-        <dt>Application client ID</dt><dd><code>@Model.Identity.ClientId</code></dd>
-        <dt>Service principal object ID</dt><dd><code>@Model.Identity.ObjectId</code></dd>
+        <dt>Workbench ID</dt><dd><code>@workbench.Id</code></dd>
+        <dt>Plant ID</dt><dd><code>@workbench.PlantId</code></dd>
+        <dt>Tenant ID</dt><dd><code>@workbench.Identity.TenantId</code></dd>
+        <dt>Application client ID</dt><dd><code>@workbench.Identity.ClientId</code></dd>
+        <dt>Service principal object ID</dt><dd><code>@workbench.Identity.ObjectId</code></dd>
     </dl>
 </section>

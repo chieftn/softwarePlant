@@ -42,7 +42,8 @@ public sealed class ProductionLinesController(PlantOperations operations, ApiSet
                 throw ApiProblems.Invalid("The form or operation key is invalid. Reload before submitting.");
             var line = id is null
                 ? await operations.CreateProductionLineAsync(Caller(), operation.ToString("D"), form.Definition(), cancellationToken)
-                : await operations.UpdateProductionLineAsync(id, Caller(), operation.ToString("D"), form.Revision,
+                : await operations.UpdateProductionLineAsync(id, Caller(), operation.ToString("D"),
+                    form.Revision ?? throw ApiProblems.Invalid("A revision is required when updating a line. Reload before submitting."),
                     form.Definition(), cancellationToken);
             return RedirectToAction(nameof(Detail), new { lineId = line.Id });
         }
@@ -53,37 +54,32 @@ public sealed class ProductionLinesController(PlantOperations operations, ApiSet
         }
     }
 
-    [HttpGet("/plants/{plantId}/workbenches/{workbenchId}/production-line")]
-    public async Task<IActionResult> Assignment(string plantId, string workbenchId, CancellationToken cancellationToken)
+    [HttpGet("/plants/{plantId}/production-line")]
+    public async Task<IActionResult> Assignment(string plantId, CancellationToken cancellationToken)
     {
         var plant = PlantEndpoints.PlantId(plantId);
-        var workbench = PlantEndpoints.WorkbenchId(workbenchId);
-        var binding = await operations.GetProductionLineBindingAsync(plant, workbench, Caller(), cancellationToken);
+        var binding = await operations.GetProductionLineBindingAsync(plant, Caller(), cancellationToken);
         return View(new ProductionLineAssignmentForm
         {
             PlantId = plant,
-            WorkbenchId = workbench,
             ExpectedVersion = binding.Version,
-            ProductionLineId = binding.ProductionLineId,
-            DesiredConfiguration = await operations.GetWorkbenchConfigurationAsync(plant, workbench, Caller(), cancellationToken),
-            Workbench = await operations.GetWorkbenchAsync(plant, workbench, Caller(), cancellationToken)
+            ProductionLineId = binding.ProductionLineId
         });
     }
 
-    [HttpPost("/plants/{plantId}/workbenches/{workbenchId}/production-line")]
-    public async Task<IActionResult> Assign(string plantId, string workbenchId,
+    [HttpPost("/plants/{plantId}/production-line")]
+    public async Task<IActionResult> Assign(string plantId,
         [FromForm] ProductionLineAssignmentForm form, CancellationToken cancellationToken)
     {
         form.PlantId = PlantEndpoints.PlantId(plantId);
-        form.WorkbenchId = PlantEndpoints.WorkbenchId(workbenchId);
         try
         {
             if (!ModelState.IsValid)
                 throw ApiProblems.Invalid("The assignment form is invalid.");
-            await operations.AssignProductionLineAsync(form.PlantId, form.WorkbenchId, Caller(),
-                new("1", form.ExpectedVersion, string.IsNullOrWhiteSpace(form.ProductionLineId) ? null : form.ProductionLineId),
+            await operations.AssignProductionLineAsync(form.PlantId, Caller(),
+                new("1", form.ExpectedVersion, string.IsNullOrWhiteSpace(form.ProductionLineId) ? null : form.ProductionLineId.Trim()),
                 cancellationToken);
-            return RedirectToAction(nameof(Assignment), new { plantId = form.PlantId, workbenchId = form.WorkbenchId });
+            return RedirectToAction(nameof(Assignment), new { plantId = form.PlantId });
         }
         catch (Exception exception) when (FormFailure(exception))
         {

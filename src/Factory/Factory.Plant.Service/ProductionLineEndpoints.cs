@@ -41,20 +41,20 @@ public static partial class PlantEndpoints
             return Results.Json(line, Json);
         });
 
-        var bindings = app.MapGroup("/v1/plants/{plantId}/workbenches/{workbenchId}/production-line")
+        var bindings = app.MapGroup("/v1/plants/{plantId}/production-line")
             .RequireRateLimiting("api").RequireAuthorization("human");
-        bindings.MapGet("", async (string plantId, string workbenchId, HttpContext context, PlantOperations operations,
+        bindings.MapGet("", async (string plantId, HttpContext context, PlantOperations operations,
             CancellationToken cancellationToken) =>
         {
             NoQuery(context);
-            return Results.Json(await operations.GetProductionLineBindingAsync(PlantId(plantId), WorkbenchId(workbenchId),
+            return Results.Json(await operations.GetProductionLineBindingAsync(PlantId(plantId),
                 ApiCaller.Read(context.User), cancellationToken), Json);
         });
-        bindings.MapPut("", async (string plantId, string workbenchId, HttpContext context, PlantOperations operations,
+        bindings.MapPut("", async (string plantId, HttpContext context, PlantOperations operations,
             CancellationToken cancellationToken) =>
         {
             NoQuery(context);
-            return Results.Json(await operations.AssignProductionLineAsync(PlantId(plantId), WorkbenchId(workbenchId),
+            return Results.Json(await operations.AssignProductionLineAsync(PlantId(plantId),
                 ApiCaller.Read(context.User), await BodyAsync<ProductionLineAssignment>(context, cancellationToken), cancellationToken), Json);
         });
     }

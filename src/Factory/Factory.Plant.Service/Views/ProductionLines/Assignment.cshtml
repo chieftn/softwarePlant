@@ -2,45 +2,28 @@
 @{
     ViewData["Title"] = "Production-line assignment";
 }
-<p><a href="/plants/@Model.PlantId/workbenches/@Model.WorkbenchId">Back to workbench</a></p>
+<p><a href="/plants/@Model.PlantId">Back to plant</a></p>
 <h1>Production-line assignment</h1>
 <section class="panel">
-    <p>Workbench: <code>@Model.WorkbenchId</code>. Binding version: @Model.ExpectedVersion.</p>
-    <p>One configured line per workbench in this slice. Assignment requires ownership of the plant and line.</p>
+    <p>Plant: <code>@Model.PlantId</code>. Binding version: @Model.ExpectedVersion.</p>
+    <p>One configured line per plant in this slice. Assignment requires ownership of the plant and line.
+        Active enrolled workbenches inherit the configuration; no individual line assignment is required.</p>
     <p><a href="/production-lines">Find or define a production line</a>, then copy its line ID below.</p>
-    <form action="/plants/@Model.PlantId/workbenches/@Model.WorkbenchId/production-line" method="post" asp-antiforgery="true">
+    <form action="/plants/@Model.PlantId/production-line" method="post" asp-antiforgery="true">
         <div asp-validation-summary="All" role="alert"></div>
         <input type="hidden" asp-for="ExpectedVersion" />
         <label asp-for="ProductionLineId">Production-line ID (leave empty to revoke)</label>
         <input asp-for="ProductionLineId" />
-        <p>Clearing the assignment revokes its configuration. Plant unassignment/move also revokes it.
+        <p>Clearing or replacing the assignment revokes the old configuration for this plant's workbenches.
+            Device unassignment/move also revokes that device's old configuration.
             In-flight work must be stopped, not gracefully drained; quiescing is a future capability.</p>
         <button class="button" type="submit">Save assignment</button>
     </form>
 </section>
 <section class="panel">
-    <h2>Workbench acknowledgment</h2>
-    <p>Desired line revision: <code>@(Model.DesiredConfiguration?.ProductionLine?.Revision ?? "None")</code>.
-        Desired membership / binding versions: @(Model.DesiredConfiguration?.AssignmentVersion.ToString() ?? "Not active")
-        / @(Model.DesiredConfiguration?.BindingVersion.ToString() ?? "Not active").</p>
-    @if (Model.Workbench?.ConfigurationObservation is { } observed)
-    {
-        var current = Model.DesiredConfiguration is { } desired &&
-            observed.AssignmentVersion == desired.AssignmentVersion && observed.BindingVersion == desired.BindingVersion &&
-            observed.ProductionLineId == desired.ProductionLine?.Id && observed.ProductionLineRevision == desired.ProductionLine?.Revision;
-        <p>@(current ? "Desired configuration acknowledged." : "Awaiting acknowledgment of current configuration or revocation.")</p>
-        <dl>
-            <dt>Observed state</dt><dd>@observed.State</dd>
-            <dt>Reason</dt><dd>@observed.Reason</dd>
-            <dt>Observed line</dt><dd><code>@(observed.ProductionLineId ?? "None")</code></dd>
-            <dt>Observed line revision</dt><dd><code>@(observed.ProductionLineRevision ?? "None")</code></dd>
-            <dt>Observed membership / binding versions</dt><dd>@observed.AssignmentVersion / @observed.BindingVersion</dd>
-            <dt>Observed (UTC)</dt><dd>@Model.Workbench.ConfigurationObservedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss")</dd>
-        </dl>
-    }
-    else
-    {
-        <p>Configuration has not been acknowledged by the workbench.</p>
-    }
-    <p class="muted">An acknowledgment describes its reported revision, not current authorization or proof that an offline process has stopped. Execution readiness remains unavailable.</p>
+    <h2>Workbench acknowledgments</h2>
+    <p>Each workbench reports its own applied configuration and blockers.
+        <a href="/plants/@Model.PlantId/workbenches">View this plant's workbenches</a> to inspect their acknowledgments.</p>
+    <p class="muted">Saving changes desired configuration; it does not prove that a workbench has received it or stopped.
+        Execution readiness remains unavailable.</p>
 </section>

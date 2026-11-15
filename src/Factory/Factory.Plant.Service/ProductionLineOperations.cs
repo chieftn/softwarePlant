@@ -95,16 +95,13 @@ public sealed partial class PlantOperations
         throw ApiProblems.Unavailable();
     }
 
-    public async Task<ProductionLineBinding> GetProductionLineBindingAsync(string plantId, string workbenchId,
+    public async Task<ProductionLineBinding> GetProductionLineBindingAsync(string plantId,
         ApiCaller caller, CancellationToken cancellationToken)
     {
-        var workbench = await GetWorkbenchAsync(plantId, workbenchId, caller, cancellationToken);
-        var stored = await BindingAsync(plantId, workbenchId, cancellationToken);
-        if (stored is null)
-            return new("1", plantId, workbenchId, 0, null);
-        var binding = Records.Require<ProductionLineBindingRecord>(stored.Record);
-        var enrollment = workbench.EnrollmentId is null ? null : await EnrollmentAsync(workbench.EnrollmentId, cancellationToken);
-        return EffectiveBinding(binding, enrollment);
+        await GetPlantAsync(plantId, caller, cancellationToken);
+        var stored = await BindingAsync(plantId, cancellationToken);
+        return stored is null ? new("1", plantId, 0, null)
+            : Records.Require<ProductionLineBindingRecord>(stored.Record).Binding;
     }
 
     public async Task<WorkbenchLineConfiguration?> GetWorkbenchConfigurationAsync(string plantId, string workbenchId,
@@ -121,49 +118,41 @@ public sealed partial class PlantOperations
                 ? await MachineConfigurationAsync(enrollment, cancellationToken) : null;
     }
 
-    public async Task<ProductionLineBinding> AssignProductionLineAsync(string plantId, string workbenchId,
+    public async Task<ProductionLineBinding> AssignProductionLineAsync(string plantId,
         ApiCaller caller, ProductionLineAssignment request, CancellationToken cancellationToken)
     {
         request.Validate();
         if (request.ProductionLineId is { } requestedLine)
             request = request with { ProductionLineId = Guid.Parse(requestedLine).ToString("D") };
-        var plant = Records.Require<PlantRecord>((await PlantAsync(plantId, cancellationToken)).Record);
-        if (!Owner(plant, caller) || plant.Plant.State != "active")
-            throw ApiProblems.Forbidden();
-        if (request.ProductionLineId is { } lineId)
-            await GetProductionLineAsync(lineId, caller, cancellationToken);
-        var scope = Records.WorkbenchScope(plantId, workbenchId);
+        var scope = Records.PlantScope(plantId);
         for (var attempt = 0; attempt < Attempts; attempt++)
         {
-            var member = await ReadAsync<WorkbenchRecord>(scope, workbenchId, plantId, cancellationToken)
-                ?? throw new ApiException(404, "workbench_not_found", "The workbench does not exist in this plant.");
-            var workbench = Records.Require<WorkbenchRecord>(member.Record);
-            var enrollment = workbench.EnrollmentId is null ? null : await EnrollmentAsync(workbench.EnrollmentId, cancellationToken);
-            if (workbench.AdmissionState != "active" || enrollment is not { State: "active" } ||
-                enrollment.AssignedPlantId != plantId || enrollment.AssignmentVersion != workbench.AssignmentVersion)
-                throw new ApiException(409, "workbench_not_assigned", "The workbench must be active in this plant.");
-            var stored = await BindingAsync(plantId, workbenchId, cancellationToken);
+            var current = await PlantAsync(plantId, cancellationToken);
+            var plant = Records.Require<PlantRecord>(current.Record);
+            if (!Owner(plant, caller) || plant.Plant.State != "active")
+                throw ApiProblems.Forbidden();
+            if (request.ProductionLineId is { } lineId)
+                await GetProductionLineAsync(lineId, caller, cancellationToken);
+            var stored = await BindingAsync(plantId, cancellationToken);
             var previous = stored is null ? null : Records.Require<ProductionLineBindingRecord>(stored.Record);
             var version = previous?.Binding.Version ?? 0;
-            var effective = previous is null ? null : EffectiveBinding(previous, enrollment).ProductionLineId;
+            var assignedLine = previous?.Binding.ProductionLineId;
             if (version != request.ExpectedVersion)
             {
-                if (version == request.ExpectedVersion + 1 && effective == request.ProductionLineId &&
-                    previous!.AssignmentVersion == enrollment.AssignmentVersion)
+                if (previous is not null && version == request.ExpectedVersion + 1 && assignedLine == request.ProductionLineId)
                     return previous.Binding;
                 throw new ApiException(409, "line_assignment_changed", "The line assignment changed. Refresh before deciding.");
             }
-            if (effective == request.ProductionLineId)
-                return new("1", plantId, workbenchId, version, effective);
-            var binding = new ProductionLineBinding("1", plantId, workbenchId, checked(version + 1), request.ProductionLineId);
+            if (assignedLine == request.ProductionLineId)
+                return new("1", plantId, version, assignedLine);
+            var binding = new ProductionLineBinding("1", plantId, checked(version + 1), request.ProductionLineId);
             var now = clock.GetUtcNow();
             if (await store.CommitAsync(scope,
             [
-                new(workbench, member.ETag),
+                new(plant, current.ETag),
                 new(new ProductionLineBindingRecord
                 {
-                    Id = "production-line", ScopeId = scope, PlantId = plantId, Binding = binding,
-                    EnrollmentId = enrollment.Id, AssignmentVersion = enrollment.AssignmentVersion
+                    Id = "production-line", ScopeId = scope, PlantId = plantId, Binding = binding
                 }, stored?.ETag),
                 new(new AuditRecord
                 {
@@ -189,31 +178,26 @@ public sealed partial class PlantOperations
             member.AdmissionState != "active" || member.EnrollmentId != enrollment.Id ||
             member.AssignmentVersion != enrollment.AssignmentVersion)
             throw ApiProblems.Forbidden();
-        var stored = await BindingAsync(plantId, enrollment.WorkbenchId, cancellationToken);
-        var binding = stored is null ? new ProductionLineBinding("1", plantId, enrollment.WorkbenchId, 0, null)
-            : EffectiveBinding(Records.Require<ProductionLineBindingRecord>(stored.Record), enrollment);
+        var stored = await BindingAsync(plantId, cancellationToken);
+        var binding = stored is null ? new ProductionLineBinding("1", plantId, 0, null)
+            : Records.Require<ProductionLineBindingRecord>(stored.Record).Binding;
         var line = binding.ProductionLineId is null ? null
             : RequireLine((await LineAsync(binding.ProductionLineId, cancellationToken)).Record).Line;
         return new("1", enrollment.Id, enrollment.WorkbenchId, plantId, enrollment.AssignmentVersion, binding.Version, line);
     }
 
-    private async Task<StoredRecord?> BindingAsync(string plantId, string workbenchId, CancellationToken cancellationToken)
+    private async Task<StoredRecord?> BindingAsync(string plantId, CancellationToken cancellationToken)
     {
-        var stored = await ReadAsync<ProductionLineBindingRecord>(Records.WorkbenchScope(plantId, workbenchId),
+        var stored = await ReadAsync<ProductionLineBindingRecord>(Records.PlantScope(plantId),
             "production-line", plantId, cancellationToken);
         if (stored is not null)
         {
             var binding = Records.Require<ProductionLineBindingRecord>(stored.Record).Binding;
-            if (binding.SchemaVersion != "1" || binding.PlantId != plantId || binding.WorkbenchId != workbenchId || binding.Version < 1)
+            if (binding.SchemaVersion != "1" || binding.PlantId != plantId || binding.Version < 1)
                 throw new InvalidOperationException("The stored line binding is inconsistent.");
         }
         return stored;
     }
-
-    private static ProductionLineBinding EffectiveBinding(ProductionLineBindingRecord stored, EnrollmentRecord? enrollment) =>
-        enrollment is { State: "active" } && enrollment.Id == stored.EnrollmentId &&
-        enrollment.AssignedPlantId == stored.PlantId && enrollment.AssignmentVersion == stored.AssignmentVersion
-            ? stored.Binding : stored.Binding with { ProductionLineId = null };
 
     private async Task<StoredRecord> LineAsync(string id, CancellationToken cancellationToken) =>
         await store.ReadAsync(Records.ProductionLineScope(id), id, cancellationToken)

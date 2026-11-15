@@ -129,8 +129,6 @@ public sealed record ProductionLineRevisionRecord : StoreRecord
 public sealed record ProductionLineBindingRecord : PlantScopedRecord
 {
     public required ProductionLineBinding Binding { get; init; }
-    public required string EnrollmentId { get; init; }
-    public required long AssignmentVersion { get; init; }
 }
 
 public sealed record ConfigurationObservationRecord : StoreRecord
