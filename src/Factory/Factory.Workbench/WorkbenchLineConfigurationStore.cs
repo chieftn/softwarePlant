@@ -64,12 +64,13 @@ public static class WorkbenchLineConfigurationStore
                 previous.Configuration.ProductionLine.Id != desired.ProductionLine?.Id);
         if (revoked)
         {
+            WorkbenchWorkloadStore.Revoke(root);
             LocalState.Write(PathFor(root), previous! with
             {
                 Observation = previous!.Observation with
                 {
                     State = "stopping",
-                    Reason = "Configuration revoked. Execution is disabled; this host has no worker processes."
+                    Reason = "Configuration revoked. Owned execution must stop; uncertain termination retains its mission claim."
                 }
             });
         }
@@ -83,7 +84,7 @@ public static class WorkbenchLineConfigurationStore
             State = desired.ProductionLine is null ? "unconfigured" : "blocked",
             Reason = desired.ProductionLine is null
                 ? "No production line is assigned. No worker execution was started."
-                : "Line configuration received. Repository workload retrieval, credentials, and worker execution are not installed."
+                : "Line configuration received. Repository specs must be resolved; worker execution remains disabled."
         };
         var current = new WorkbenchLineState("1", binding.InstallationId, desired, observation);
         LocalState.Write(PathFor(root), current);

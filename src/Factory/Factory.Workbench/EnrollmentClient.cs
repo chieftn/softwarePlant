@@ -15,10 +15,12 @@ public sealed record UnenrollmentJournal(string SchemaVersion, EnrollmentJournal
 public sealed record RemovalIntent(string SchemaVersion, string InstallationId, string? EnrollmentId,
     string RemoteOutcome, bool CertificatesRemoved = false);
 
-public sealed class PlantConnectionException(HttpStatusCode status, string message, string? correlationId = null) : IOException(message)
+public sealed class PlantConnectionException(HttpStatusCode status, string message, string? correlationId = null,
+    string? code = null) : IOException(message)
 {
     public HttpStatusCode Status { get; } = status;
     public string? CorrelationId { get; } = correlationId;
+    public string? Code { get; } = code;
 }
 
 public static class BindingStore
@@ -138,10 +140,13 @@ public sealed class PlantHttp(HttpClient http, Func<CancellationToken, Task<stri
                     authenticationRejected?.Invoke();
                 var correlation = "";
                 string? correlationId = null;
+                string? code = null;
                 var detail = "";
                 if (response.Content.Headers.ContentType?.MediaType == "application/problem+json")
                 {
                     var problem = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+                    if (problem.TryGetProperty("code", out var problemCode) && problemCode.ValueKind == JsonValueKind.String)
+                        code = problemCode.GetString();
                     if (problem.TryGetProperty("correlationId", out var value))
                     {
                         correlationId = value.GetString();
@@ -155,14 +160,14 @@ public sealed class PlantHttp(HttpClient http, Func<CancellationToken, Task<stri
                 }
                 throw new PlantConnectionException(response.StatusCode,
                     $"Plant request failed (HTTP {(int)response.StatusCode}).{detail}{correlation} Check plant authority, enrollment configuration, and service logs.",
-                    correlationId);
+                    correlationId, code);
             }
         }
         return response;
     }
 
     public static HttpClient Create(string origin) => new(new HttpClientHandler { AllowAutoRedirect = false })
-        { BaseAddress = new Uri(origin), Timeout = TimeSpan.FromSeconds(30), MaxResponseContentBufferSize = 128 * 1024 };
+    { BaseAddress = new Uri(origin), Timeout = TimeSpan.FromSeconds(30), MaxResponseContentBufferSize = 128 * 1024 };
 }
 
 public sealed class EnrollmentClient(PlantHttp plant)
@@ -194,8 +199,11 @@ public sealed class EnrollmentClient(PlantHttp plant)
             throw new InvalidDataException("Enrollment key does not match its journal.");
         var draft = new EnrollmentDraft
         {
-            SchemaVersion = "1", OperationId = journal.OperationId, InstallationId = journal.InstallationId,
-            MachineName = journal.MachineName, PublicCertificate = Convert.ToBase64String(certificate.RawData)
+            SchemaVersion = "1",
+            OperationId = journal.OperationId,
+            InstallationId = journal.InstallationId,
+            MachineName = journal.MachineName,
+            PublicCertificate = Convert.ToBase64String(certificate.RawData)
         };
         draft.Validate();
         var challenge = await plant.SendAsync<EnrollmentChallenge>(HttpMethod.Post,
@@ -216,8 +224,11 @@ public sealed class EnrollmentClient(PlantHttp plant)
             $"v1/enrollments/{journal.OperationId}/revoke",
             journal.PublicCertificate is null ? null : new EnrollmentDraft
             {
-                SchemaVersion = "1", OperationId = journal.OperationId, InstallationId = journal.InstallationId,
-                MachineName = journal.MachineName, PublicCertificate = journal.PublicCertificate
+                SchemaVersion = "1",
+                OperationId = journal.OperationId,
+                InstallationId = journal.InstallationId,
+                MachineName = journal.MachineName,
+                PublicCertificate = journal.PublicCertificate
             }, journal.OperationId, cancellationToken);
 
     public static WorkbenchBinding SaveBinding(string root, EnrollmentJournal journal, EnrollmentView view)

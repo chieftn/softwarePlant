@@ -19,6 +19,8 @@ namespace Factory.Plant.Service.Storage;
 [JsonDerivedType(typeof(ProductionLineRevisionRecord), "productionLineRevision")]
 [JsonDerivedType(typeof(ProductionLineBindingRecord), "productionLineBinding")]
 [JsonDerivedType(typeof(ConfigurationObservationRecord), "configurationObservation")]
+[JsonDerivedType(typeof(DevelopmentMissionRecord), "developmentMission")]
+[JsonDerivedType(typeof(DevelopmentIssueClaimRecord), "developmentIssueClaim")]
 public abstract record StoreRecord
 {
     public required string Id { get; init; }
@@ -29,6 +31,20 @@ public abstract record StoreRecord
 public abstract record PlantScopedRecord : StoreRecord
 {
     public required string PlantId { get; init; }
+}
+
+public sealed record DevelopmentMissionRecord : StoreRecord
+{
+    public required DevelopmentMission Mission { get; init; }
+    public required string RequestDigest { get; init; }
+    public required DevelopmentMissionProgress Progress { get; init; }
+    public bool TerminationConfirmed { get; init; }
+}
+
+public sealed record DevelopmentIssueClaimRecord : StoreRecord
+{
+    public required string EnrollmentId { get; init; }
+    public required string MissionId { get; init; }
 }
 
 public sealed record PlantRecord : PlantScopedRecord

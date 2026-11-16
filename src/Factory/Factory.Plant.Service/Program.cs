@@ -38,6 +38,13 @@ public partial class Program
         builder.Services.AddOptions<EnrollmentSettings>().BindConfiguration("Factory:Enrollment");
         builder.Services.AddSingleton(services => services.GetRequiredService<IOptions<EnrollmentSettings>>().Value);
         builder.Services.AddScoped<EnrollmentOperations>();
+        builder.Services.AddOptions<GitHubConnectionsSettings>().BindConfiguration("Factory:GitHub");
+        builder.Services.AddSingleton(services => services.GetRequiredService<IOptions<GitHubConnectionsSettings>>().Value);
+        builder.Services.AddSingleton<GitHubRepositoryReader>();
+        builder.Services.AddSingleton<IGitHubRepositoryReader>(services => services.GetRequiredService<GitHubRepositoryReader>());
+        builder.Services.AddSingleton<IGitHubDevelopmentRepository>(services => services.GetRequiredService<GitHubRepositoryReader>());
+        builder.Services.AddOptions<DevelopmentMissionSettings>().BindConfiguration("Factory:Development");
+        builder.Services.AddSingleton(services => services.GetRequiredService<IOptions<DevelopmentMissionSettings>>().Value);
         builder.Services.AddScoped<EnrollmentProcessor>();
         builder.Services.AddSingleton<IDirectoryProvisioner, GraphDirectoryProvisioner>();
         builder.Services.AddHostedService<EnrollmentWorker>();

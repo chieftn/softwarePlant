@@ -67,12 +67,20 @@ public sealed class ProductionLineSynchronizationTests : IDisposable
         assigned.EnsureSuccessStatusCode();
         var handler = new ConfigurationOutage(app.Server.CreateHandler());
         using var machine = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
-        var connection = new WorkbenchPlantConnection(Transport(app, machine), binding, "test-release", root);
+        var revocationObserved = false;
+        var connection = new WorkbenchPlantConnection(Transport(app, machine), binding, "test-release", root,
+            (configuration, _) =>
+            {
+                if (configuration.AssignmentVersion > 1 && configuration.ProductionLine is null)
+                    revocationObserved = true;
+                return Task.CompletedTask;
+            });
         await connection.PublishAsync(CancellationToken.None);
         using var unassigned = await admin.PutAsJsonAsync($"/v1/enrollments/{enrollment.Id}/assignment",
             new { schemaVersion = "1", expectedVersion = 1 });
         unassigned.EnsureSuccessStatusCode();
         handler.Fail = true;
+        handler.BeforeFailedRead = () => Assert.True(revocationObserved);
         await Assert.ThrowsAsync<PlantConnectionException>(() => connection.PublishAsync(CancellationToken.None));
         var state = WorkbenchLineConfigurationStore.Read(root, binding)!;
         Assert.Null(state.Configuration.ProductionLine);
@@ -200,10 +208,16 @@ public sealed class ProductionLineSynchronizationTests : IDisposable
     private sealed class ConfigurationOutage(HttpMessageHandler inner) : DelegatingHandler(inner)
     {
         public bool Fail { get; set; }
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Fail && request.RequestUri!.AbsolutePath.EndsWith("/configuration", StringComparison.Ordinal)
-                ? Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))
-                : base.SendAsync(request, cancellationToken);
+        public Action? BeforeFailedRead { get; set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (Fail && request.RequestUri!.AbsolutePath.EndsWith("/configuration", StringComparison.Ordinal))
+            {
+                BeforeFailedRead?.Invoke();
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+            }
+            return base.SendAsync(request, cancellationToken);
+        }
     }
 
     public void Dispose()

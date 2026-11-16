@@ -1015,7 +1015,7 @@ paths:
       description: |
         Factory-level route remains available while unassigned. Returns null
         plant/line as appropriate, not an execution grant. Source workload
-        retrieval and execution are not implemented by this operation.
+        retrieval and execution require separate, explicitly authorized operations.
       security:
         - WorkbenchBearer: []
       responses:
@@ -1038,8 +1038,8 @@ paths:
         Requires matching membership/binding/line revisions for a new report.
         Stale configuration returns 409. Identical retries do not overwrite a
         newer observation or refresh its timestamp. Available after plant
-        unassignment through Factory authentication. Readiness, task claims,
-        worker execution and quiescing are unsupported in this slice.
+        unassignment through Factory authentication. This is not a mission claim
+        or proof of worker containment. Graceful quiescing is not implemented.
       security:
         - WorkbenchBearer: []
       parameters:
@@ -1053,6 +1053,229 @@ paths:
       responses:
         '204':
           description: Observation persisted or identical report replayed.
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/workload:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: resolveWorkbenchWorkload
+      tags: [ProductionLines]
+      summary: Resolve bounded repository specs at one immutable source commit.
+      description: |
+        Requires exact active machine authority and matching membership, binding,
+        line ID and revision before and after resolution. GitHub App credentials
+        are service-owned and are never returned with the specs. No execution grant.
+      security:
+        - WorkbenchBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkloadRequest'
+      responses:
+        '200':
+          description: Pinned and validated workload snapshot; Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolvedRepositoryWorkload'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: claimDevelopmentMission
+      tags: [ProductionLines]
+      summary: Reserve one eligible issue and freeze its owned mission.
+      description: |
+        Disabled by default. Requires current machine/configuration authority,
+        explicit issue number, labels, acceptance criteria, verification commands,
+        publication policy and trusted reviewers. Idempotency-Key must equal the
+        request operationId. Repository-wide issue ownership is unique; uncertain
+        reservations are retained rather than automatically requeued.
+      security:
+        - WorkbenchBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentClaimRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/DevelopmentMissionDelivery'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+    get:
+      operationId: getDevelopmentMission
+      tags: [ProductionLines]
+      summary: Read the exact machine's retained mission under current authority.
+      security:
+        - WorkbenchBearer: []
+      responses:
+        '200':
+          $ref: '#/components/responses/DevelopmentMissionDelivery'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission/authorize:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: authorizeDevelopmentMission
+      tags: [ProductionLines]
+      summary: Recheck current ownership, policy, repository authority and frozen issue.
+      security:
+        - WorkbenchBearer: []
+      responses:
+        '204':
+          description: Current owned mission remains authorized; not a permanent grant.
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission/credential:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: getDevelopmentSourceCredential
+      tags: [ProductionLines]
+      summary: Obtain a short-lived repository-scoped source credential.
+      description: |
+        No ambient personal credential fallback. Publish purpose requires recorded
+        exact candidate publication intent and separately enabled connection writes.
+        Repository tokens cannot themselves restrict a branch. Never log the token.
+      security:
+        - WorkbenchBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MissionCredentialRequest'
+      responses:
+        '200':
+          description: Sensitive child-only source credential; Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryAccessCredential'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission/publish:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: publishDevelopmentPullRequest
+      tags: [ProductionLines]
+      summary: Create or read back the one marker-bound draft PR for recorded intent.
+      description: Worker pushes the exact candidate separately. This operation never merges.
+      security:
+        - WorkbenchBearer: []
+      requestBody:
+        $ref: '#/components/requestBodies/MissionCandidate'
+      responses:
+        '200':
+          $ref: '#/components/responses/DevelopmentPublication'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission/published:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: reconcileDevelopmentPublication
+      tags: [ProductionLines]
+      summary: Read back recorded publication without replaying agent work or creating a PR.
+      security:
+        - WorkbenchBearer: []
+      requestBody:
+        $ref: '#/components/requestBodies/MissionCandidate'
+      responses:
+        '200':
+          description: Exact owned publication receipt, or JSON null when no matching PR exists.
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                allOf:
+                  - $ref: '#/components/schemas/PublishedDevelopmentPullRequest'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission/review:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    get:
+      operationId: getDevelopmentReview
+      tags: [ProductionLines]
+      summary: Read bounded commit-specific reviews and revision comments.
+      description: |
+        Formal trusted current-head approval is authoritative. General revision
+        comments require /factory revise followed by the exact 40-character head.
+        An untrusted comment cannot start work or widen mission authority.
+      security:
+        - WorkbenchBearer: []
+      responses:
+        '200':
+          description: Current PR state/head and bounded review feedback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentReview'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission/progress:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    put:
+      operationId: reportDevelopmentMission
+      tags: [ProductionLines]
+      summary: Persist idempotent progress without decreasing frozen mission counters.
+      description: |
+        Identical retries cannot overwrite newer state. Approved progress is
+        independently checked against trusted current-head GitHub reviews.
+        The exact original machine can report faults after binding revocation;
+        fault reporting does not grant execution or release ownership.
+        Omit absent nullable request fields; explicit top-level nulls are rejected.
+      security:
+        - WorkbenchBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentMissionProgress'
+      responses:
+        '204':
+          description: Progress persisted or identical receipt replayed.
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission/terminated:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: confirmDevelopmentTermination
+      tags: [ProductionLines]
+      summary: Original enrolled machine records confirmed owned-worker termination.
+      description: |
+        Available after retirement or unassignment using the exact retained
+        machine identity. Does not restore authority, delete evidence, release
+        repository-wide issue ownership, or prove sandbox containment.
+      security:
+        - WorkbenchBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MissionTerminationRequest'
+      responses:
+        '204':
+          description: Termination confirmation durably recorded.
         default:
           $ref: '#/components/responses/UnexpectedFailure'
 components:
@@ -1155,6 +1378,12 @@ components:
         format: int32
         minimum: 1
   requestBodies:
+    MissionCandidate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MissionCandidateRequest'
     ProductionLineWrite:
       required: true
       content:
@@ -1384,6 +1613,280 @@ components:
           type: string
           minLength: 1
           maxLength: 256
+    WorkloadRequest:
+      type: object
+      additionalProperties: false
+      required: [assignmentVersion, bindingVersion, productionLineId, productionLineRevision]
+      properties:
+        assignmentVersion:
+          type: integer
+          format: int64
+          minimum: 0
+        bindingVersion:
+          type: integer
+          format: int64
+          minimum: 0
+        productionLineId:
+          type: string
+          format: uuid
+        productionLineRevision:
+          $ref: '#/components/schemas/EntityTag'
+    GitCommit:
+      type: string
+      pattern: '^[A-Fa-f0-9]{40}$'
+    SnapshotDigest:
+      type: string
+      pattern: '^[A-F0-9]{64}$'
+    ResolvedRepositoryWorkload:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, configuration, sourceCommit, digest, files]
+      properties:
+        schemaVersion:
+          type: string
+          enum: ['1']
+        configuration:
+          $ref: '#/components/schemas/WorkbenchLineConfiguration'
+        sourceCommit:
+          $ref: '#/components/schemas/GitCommit'
+        digest:
+          $ref: '#/components/schemas/SnapshotDigest'
+        files:
+          type: object
+          minProperties: 4
+          maxProperties: 4
+          description: Relative workload paths mapped to UTF-8 contents, each at most 16 KiB; total snapshot at most 96 KiB.
+          additionalProperties:
+            type: string
+            minLength: 1
+    DevelopmentClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, configuration, workloadDigest, issueNumber, model]
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        configuration:
+          $ref: '#/components/schemas/WorkloadRequest'
+        workloadDigest:
+          $ref: '#/components/schemas/SnapshotDigest'
+        issueNumber:
+          type: integer
+          format: int64
+          minimum: 1
+        model:
+          type: string
+          minLength: 1
+          maxLength: 128
+    DevelopmentIssue:
+      type: object
+      additionalProperties: false
+      required: [number, repository, title, body, acceptanceCriteria, labels, updatedAt]
+      properties:
+        number:
+          type: integer
+          format: int64
+          minimum: 1
+        repository:
+          type: string
+        title:
+          type: string
+          minLength: 1
+          maxLength: 256
+        body:
+          type: string
+          minLength: 1
+          maxLength: 16384
+        acceptanceCriteria:
+          type: array
+          minItems: 1
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1024
+        labels:
+          type: array
+          items:
+            type: string
+        updatedAt:
+          type: string
+          format: date-time
+    DevelopmentMission:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, id, workload, issue, model, createdAt, approvalDeadline, digest, branch]
+      properties:
+        schemaVersion:
+          type: string
+          enum: ['1']
+        id:
+          type: string
+          format: uuid
+        workload:
+          $ref: '#/components/schemas/ResolvedRepositoryWorkload'
+        issue:
+          $ref: '#/components/schemas/DevelopmentIssue'
+        model:
+          type: string
+          minLength: 1
+          maxLength: 128
+        createdAt:
+          type: string
+          format: date-time
+        approvalDeadline:
+          type: string
+          format: date-time
+          description: Fixed human deadline, no later than seven days after createdAt.
+        digest:
+          $ref: '#/components/schemas/SnapshotDigest'
+        branch:
+          type: string
+          readOnly: true
+          description: factory/mission-{id}
+    DevelopmentMissionDelivery:
+      type: object
+      additionalProperties: false
+      required: [mission, state, reviewers, publicationPending]
+      properties:
+        mission:
+          $ref: '#/components/schemas/DevelopmentMission'
+        state:
+          type: string
+          enum: [reserving, rejected, claimed, executing, publishing, awaitingApproval, revising, approved, blocked, cancelled, needsAttention]
+        reviewers:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: string
+        publicationPending:
+          type: boolean
+          description: Recorded write intent permits read-back reconciliation, not agent replay.
+    MissionCandidateRequest:
+      type: object
+      additionalProperties: false
+      required: [candidateCommit]
+      properties:
+        candidateCommit:
+          $ref: '#/components/schemas/GitCommit'
+    MissionCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose]
+      properties:
+        purpose:
+          type: string
+          enum: [read, publish]
+    RepositoryAccessCredential:
+      type: object
+      additionalProperties: false
+      required: [repository, token, expiresAt]
+      properties:
+        repository:
+          type: string
+        token:
+          type: string
+          description: Sensitive installation token; not a Copilot model credential.
+        expiresAt:
+          type: string
+          format: date-time
+    PublishedDevelopmentPullRequest:
+      type: object
+      additionalProperties: false
+      required: [number, repository, branch, baseBranch, candidateCommit, url]
+      properties:
+        number:
+          type: integer
+          format: int64
+          minimum: 1
+        repository:
+          type: string
+        branch:
+          type: string
+        baseBranch:
+          type: string
+        candidateCommit:
+          $ref: '#/components/schemas/GitCommit'
+        url:
+          type: string
+          format: uri
+    DevelopmentReviewFeedback:
+      type: object
+      additionalProperties: false
+      required: [id, actor, candidateCommit, kind, body, recordedAt]
+      properties:
+        id:
+          type: string
+        actor:
+          type: string
+        candidateCommit:
+          $ref: '#/components/schemas/GitCommit'
+        kind:
+          type: string
+          enum: [approved, changesRequested, dismissed, comment]
+        body:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    DevelopmentReview:
+      type: object
+      additionalProperties: false
+      required: [candidateCommit, state, feedback]
+      properties:
+        candidateCommit:
+          $ref: '#/components/schemas/GitCommit'
+        state:
+          type: string
+        feedback:
+          type: array
+          items:
+            $ref: '#/components/schemas/DevelopmentReviewFeedback'
+    DevelopmentMissionProgress:
+      type: object
+      additionalProperties: false
+      required: [missionId, missionDigest, state, iterations, activeMilliseconds, publicationPending, reason]
+      properties:
+        missionId:
+          type: string
+          format: uuid
+        missionDigest:
+          $ref: '#/components/schemas/SnapshotDigest'
+        state:
+          type: string
+          enum: [claimed, executing, publishing, awaitingApproval, revising, approved, blocked, cancelled, needsAttention]
+        iterations:
+          type: integer
+          minimum: 0
+          maximum: 20
+        activeMilliseconds:
+          type: integer
+          format: int64
+          minimum: 0
+        candidateCommit:
+          $ref: '#/components/schemas/GitCommit'
+        pullRequest:
+          $ref: '#/components/schemas/PublishedDevelopmentPullRequest'
+        publicationPending:
+          type: boolean
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+    MissionTerminationRequest:
+      type: object
+      additionalProperties: false
+      required: [missionId, confirmed]
+      properties:
+        missionId:
+          type: string
+          format: uuid
+        confirmed:
+          type: boolean
+          enum: [true]
     EnrollmentDraft:
       type: object
       additionalProperties: false
@@ -1839,6 +2342,18 @@ components:
           minimum: 1
           description: When present, matches the Retry-After header.
   responses:
+    DevelopmentMissionDelivery:
+      description: Frozen owned mission and current durable state; Cache-Control no-store.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DevelopmentMissionDelivery'
+    DevelopmentPublication:
+      description: Exact marker-bound owned draft PR receipt.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PublishedDevelopmentPullRequest'
     ProductionLine:
       description: Current or recorded production-line definition.
       headers:

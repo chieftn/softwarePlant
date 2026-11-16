@@ -83,3 +83,30 @@ The tester then exposed a create-form bug: its empty hidden `Revision` was incor
 Latest package/evidence: `src\Factory\artifacts\service\production-lines-plantassign-20261114-001`, source commit `daf3d5bd5f1f2241c930d8d3399f76cc719df4c0`. The approved combined deployment also includes repository-input whitespace trimming and field-specific errors. Health is 200, the plant binding API is 401/Bearer, the removed workbench binding API is 404, and browser pages/Entra code/PKCE callback remain protected and correct. All 24 settings, two identities, hosting, VNet/subnet/route-all and authentication fingerprints match preflight. No workbench installation, data creation or new grants were performed.
 
 The user deferred client packaging to focus on the repository workload, then approved defining v1 and opening a draft PR. [chieftn/productionOutput1#2](https://github.com/chieftn/productionOutput1/pull/2) is open against `main`, head `c3c634857992dde48faf3e51538f649f88185769`. It contains the manifest/schema, Implementation and read-only Alignment instructions, bounded workflow/evidence/stop rules, and PowerShell authoring checks (22 assertions passed). The repository began with only a README; product preparation/verification commands are not invented, and missing project verification explicitly blocks execution. This is a proposed contract, not an installed SDK worker or a replacement registry schema. The PR is not merged; `main` does not yet contain the workload. No CI permission expansion, service deployment, client install or model calls occurred in this increment.
+
+Before stepping away, the user specified the next work: extend the workbench's existing plant-line memo discovery to retrieve pinned repository specs through unattended authentication, then consume an approved assigned issue, run the SDK workflow, publish one PR, monitor authorized feedback, revise/verify/push on that PR and await approval. Keep task eligibility/claims in the plant service and SDK/source execution in the workbench. The repository's PowerShell scripts validate authoring only; JSON/Markdown must be translated by our .NET SDK adapter, not executed as a PowerShell agent workflow. Repository credentials and Copilot model access are separate; the interactive CLI login used for this PR does not equip the Windows service.
+
+The execution plan records the requested review/revision loop. Issue assignment, approved reviewers/feedback events, authoritative approval, durable review-wait/claim behavior, active-revision limits, typed results and real project verification remain decisions before enabling it. No new grants, model calls, client installation or deployment are authorized merely by recording this handoff.
+
+## Overnight Implementation Handoff
+
+The user subsequently explicitly authorized overnight local implementation and
+detailed gap logging. The inherited-line workbench now has authenticated pinned
+spec retrieval, service-owned issue claims/publication/review endpoints, a real
+Linux MAF/Copilot SDK adapter and durable Implementation/Alignment ->
+verified draft PR -> trusted feedback/revision -> current-head approval control.
+This work is uncommitted and disabled by default; it has not been deployed or
+installed. The installed client and active service deployment above are unchanged.
+
+The focused local suite passed 46 cases, including OpenAPI validation, policy
+revocation, unique claims, strict journal/request serialization, publication
+reconciliation and disabled execution boundaries. These fixtures are not live
+GitHub/Copilot/WSL acceptance. The process-group stop helper does not prove
+all-descendant containment, configuration observations do not yet prove
+unattended readiness, and the product workload still lacks real verification.
+
+See [the overnight log](development-missions-overnight-log.md) for implementation
+evidence, exact credential/configuration boundaries and the morning decisions:
+unattended GitHub/model auth, project commands, WSL/CLI packaging and containment,
+issue/reviewer policy, evidence retrieval, operator recovery and separate rollout
+approval. PowerShell remains an authoring validator, not the SDK workflow.

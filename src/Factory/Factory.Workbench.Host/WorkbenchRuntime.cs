@@ -24,6 +24,7 @@ public static class WorkbenchRuntime
         X509Certificate2? certificate = null;
         HttpClient? http = null;
         WorkbenchPlantConnection? connection = null;
+        WorkbenchDevelopmentExecution? development = null;
         try
         {
             while (true)
@@ -43,27 +44,37 @@ public static class WorkbenchRuntime
                             certificate = MachineCertificates.Read(binding.CertificateThumbprint);
                             var tokens = new CertificateTokenSource(configuration, binding, certificate);
                             http ??= PlantHttp.Create(configuration.PlantServiceUrl);
-                            connection = new(new PlantHttp(http, tokens.TokenAsync, tokens.RequestFreshToken), binding, release, root);
+                            var plant = new PlantHttp(http, tokens.TokenAsync, tokens.RequestFreshToken);
+                            development = new(plant, binding, configuration, root);
+                            await development.RecoverAsync(cancellationToken);
+                            connection = new(plant, binding, release, root, development.ObserveAsync,
+                                () => (development.State, development.Reason));
                         }
                         await connection.PublishAsync(cancellationToken);
+                        await development!.TickAsync(cancellationToken);
                         status = status with
                         {
                             PlantConnected = true,
                             ConfigurationObservation = connection.ConfigurationObservation,
-                            Reason = connection.ConfigurationObservation?.Reason ?? "Factory connected; execution remains disabled."
+                            State = configuration.Development?.Enabled == true ? development.State : "notReady",
+                            Reason = configuration.Development?.Enabled == true ? development.Reason :
+                                connection.ConfigurationObservation?.Reason ?? "Factory connected; execution remains disabled."
                         };
                     }
                     catch (Exception error) when (error is HttpRequestException or IOException or MsalException or CryptographicException ||
                         error is TaskCanceledException && !cancellationToken.IsCancellationRequested)
                     {
+                        if (development is not null)
+                            await development.StopAsync(CancellationToken.None);
                         status = status with
                         {
                             PlantConnected = false,
+                            State = "notReady",
                             ConfigurationObservation = connection?.ConfigurationObservation,
-                            Reason = $"Plant connection unavailable: {error.GetType().Name}. Execution remains disabled. WSL is not started."
+                            Reason = $"Plant connection unavailable: {error.GetType().Name}. Owned execution stopped; unresolved journals are retained."
                         };
                         if (logger is not null)
-                            logger.LogWarning(error, "Plant connection unavailable. Reports are retained; execution remains disabled.");
+                            logger.LogWarning(error, "Plant connection unavailable. Reports are retained; owned execution is stopped.");
                         else
                             Console.Error.WriteLine($"{DateTimeOffset.UtcNow:O} {status.Reason} {error.Message}");
                     }
@@ -74,18 +85,28 @@ public static class WorkbenchRuntime
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            if (development is not null)
+                await development.StopAsync(CancellationToken.None);
             LocalState.Write(LocalState.RuntimeStatusPath(root), status with
             {
                 ObservedAt = DateTimeOffset.UtcNow,
                 State = "stopped",
                 PlantConnected = false,
-                Reason = "Host stopped cooperatively; no worker execution was started."
+                Reason = "Host stopped; any owned Linux execution was terminated and journals retained."
             });
         }
         finally
         {
-            certificate?.Dispose();
-            http?.Dispose();
+            try
+            {
+                if (development is not null)
+                    await development.StopAsync(CancellationToken.None);
+            }
+            finally
+            {
+                certificate?.Dispose();
+                http?.Dispose();
+            }
         }
     }
 }

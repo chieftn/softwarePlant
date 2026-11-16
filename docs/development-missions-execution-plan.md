@@ -184,20 +184,38 @@ Do not implement quiesce implicitly as v1 unassignment behavior. The current req
 
 **Checkpoint:** A focused issue reaches a checked candidate; a blocking finding causes bounded revision; exhausted limits and cancellation produce explicit non-success outcomes. Lost result acknowledgments do not cause duplicate execution.
 
-## Iteration 7: Permitted PR Publication and End-to-End Acceptance
+## Iteration 7: Permitted PR Publication, Review/Revision, and Approval
 
-**Deliver:** ProductZero produces one linked draft PR from its configured issue workflow.
+**Deliver:** ProductZero produces one linked draft PR, responds to authorized review feedback with verified revisions, and awaits explicit approval.
 
 - Enable publication only for the approved line, repository, claimed mission, and local policy.
 - Create the commit and branch using the supported source adapter; create a draft PR linked to the issue.
 - Read back repository, branch, commit, base, and draft PR state before reporting publication success.
 - Record the checked revision, snapshot identity, verification/alignment evidence, publication references, and terminal disposition.
 - Reconcile lost push/PR responses before another mutation. An uncertain publication must not create a second PR or release the task for another worker.
+- Monitor the owned PR for authorized review feedback. Persist review/comment IDs and the reviewed commit; process each accepted feedback snapshot once. Comments cannot grant permissions or silently change approved task scope.
+- Re-enter Implementation/verification/Alignment for accepted revision requests, then push the checked candidate to the same owned branch and PR. Do not replay publication, overwrite another actor's commits or treat a stale approval as approval of a changed candidate.
+- Wait durably for review/approval without leaving SDK sessions running. Preserve ownership and reporting/revocation capability during the wait; agree claim/capacity behavior before implementation.
+- Distinguish bounded active execution/revision budgets from human review wait deadlines. Do not reset iteration limits on each poll or consume an entire execution budget merely waiting for a person.
+- Define the authoritative approval signal and approved reviewers. Await that approval; do not infer approval from an ordinary comment or automatically merge afterward.
 - Report progress/results to GitHub only through explicitly approved actions. Do not automatically merge, mark ready for review, release, or close the issue as accepted.
 - Deploy service and worker changes separately with compatibility checks. Roll out to the designated test machine, not the shared development machine.
 - Demonstrate the complete path with one approved issue, then confirm that the ready workbench can request the next authorized mission without replaying the completed one.
 
-**Checkpoint:** ProductZero configuration and binding are visible in the website; the assigned workbench executes the pinned workload; the resulting draft PR points to the verified revision; evidence is retained; a repeated request does not duplicate execution or publication.
+**Checkpoint:** ProductZero configuration and binding are visible in the website; the assigned workbench executes the pinned workload and opens one verified draft PR; accepted review feedback produces a fresh checked revision on that PR; the workflow awaits approval; evidence is retained and repeated polling/retries do not duplicate execution or publication.
+
+### Next Requested Workbench Slice
+
+The user requested the next sequence before stepping away:
+
+1. Extend the existing workbench membership/plant-line discovery to retrieve the assigned repository workload. Configuration memo code already exists; do not rebuild a per-workbench line-assignment model.
+2. Resolve the connection reference through unattended, scoped repository authentication, obtain the manifest/instructions from one pinned Git revision, and validate the supported contract. The operator's interactive `gh` login used to publish the workload PR is not service-owned authentication. GitHub repository/issue/PR access and Copilot model access are separate prerequisites.
+3. Deliver one approved assigned issue as a frozen, owned mission. The plant's task adapter owns eligibility/intake; the workbench worker consumes the snapshot, runs SDK-backed Implementation/Alignment, verifies the candidate and publishes the permitted PR.
+4. Monitor that PR, accept authorized revision feedback, revise/verify/push on the same branch and then await explicit approval. Keep the outer durable lifecycle in the workbench/service boundary and the agent reasoning/tool loop in the SDK.
+
+The PowerShell files in chieftn/productionOutput1#2 are **authoring validators**, not an implementation of the Copilot SDK workflow. Its JSON/Markdown contract is our proposed workload format, not a native SDK schema. The .NET worker adapter must translate it into supported SDK sessions/tools and independently enforce permissions, budgets, verification and stopping. The [SDK architecture](https://github.com/github/copilot-sdk#architecture) uses an SDK client and agent runtime (by default a CLI server child process); it does not automatically consume our manifest or supply the issue/PR lifecycle.
+
+Before enabling this path, settle the issue-assignment rule, permitted feedback actors/events, authoritative approval signal, review-wait/claim behavior and active-revision limits. Define the missing typed mission/result contracts and actual project verification commands. Approve GitHub App/credential provisioning, Copilot authentication/model calls, service deployment and test-machine installation separately; no interactive login or ambient credentials may substitute for service readiness.
 
 ## Deferred
 
@@ -288,3 +306,23 @@ Published branch: `user/rkessler/production-line-v1-contract`; head commit `c3c6
 | 7. PR acceptance | Planned | Approve publication and test-machine rollout; demonstrate one issue-to-draft-PR run. |
 
 Update this record with the actual outcome of each approved iteration. Do not label a design, local build, connection check, or simulated run as deployed end-to-end acceptance.
+
+### Overnight Local Implementation
+
+After the planning handoff, the user explicitly authorized overnight
+implementation with detailed gap logs. This updates the planned state above;
+it does not alter the existing deployment or installed client.
+
+| Increment | Local outcome | Remaining gate |
+|---|---|---|
+| Assigned workload retrieval | Exact-machine GitHub App-backed tree/blob resolution, strict v1 specs, immutable digest/cache and revocation fencing implemented. | Provision unattended connections; merge/configure the product workload. |
+| Issue intake and ownership | Frozen explicit issue/model/snapshot, unique repository-wide issue claim, conditional per-workbench reservation and scoped credential/progress endpoints implemented. | Agree targeted issue UX and operator reservation/requeue policy; no live claim acceptance. |
+| SDK rings and review | Actual pinned MAF/Copilot Linux adapter, independent checks/Alignment, publication intent, one draft PR, trusted commit-bound revisions and service-verified approval implemented. | Provision supported model auth, real project checks and explicit publication/reviewer policy; no live model or PR run. |
+| Host/worker lifecycle | Restricted owned pipe, local journals, resume read-back and process-group stop/revocation wiring implemented. | Worker/CLI packaging, service-owned WSL/cold-boot acceptance, all-descendant containment and a real readiness handshake remain blockers. |
+| Local contract checks | 46 focused cases passed; changed-C# whitespace verification and OpenAPI parser/validation passed. | These are isolated fixtures, not end-to-end runtime acceptance. |
+
+Detailed results and decisions are recorded in
+[the overnight log](development-missions-overnight-log.md). Source changes remain
+uncommitted; no new grants, service deployment, client installation, live SDK/WSL
+execution or repository mutation occurred. Keep execution disabled until the
+recorded activation blockers are resolved and the separate rollout is approved.

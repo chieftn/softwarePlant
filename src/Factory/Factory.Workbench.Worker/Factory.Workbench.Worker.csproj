@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Factory.Tests" />
+    <ProjectReference Include="..\Factory.Workbench\Factory.Workbench.csproj" />
+    <PackageReference Include="Microsoft.Agents.AI.GitHub.Copilot" Version="1.28.0" />
+    <PackageReference Include="GitHub.Copilot.SDK" Version="1.0.31" />
+  </ItemGroup>
+</Project>

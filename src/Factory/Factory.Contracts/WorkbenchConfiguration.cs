@@ -14,6 +14,7 @@ public sealed record WorkbenchConfiguration
     public required string[] AllowedRepositories { get; init; }
     public required bool AllowShellExecution { get; init; }
     public required bool AllowPublication { get; init; }
+    public WorkbenchDevelopmentConfiguration? Development { get; init; }
 
     public void Validate()
     {
@@ -53,9 +54,38 @@ public sealed record WorkbenchConfiguration
         }
         ContractValidation.Require(AllowedRepositories.Distinct(StringComparer.OrdinalIgnoreCase).Count() ==
             AllowedRepositories.Length, "AllowedRepositories must contain distinct entries.");
+        if (Development?.Enabled == true)
+        {
+            Development.Validate();
+            ContractValidation.Require(AllowShellExecution && AllowPublication && AllowedRepositories.Length > 0,
+                "Development execution requires explicit local shell/publication permissions and repository allowlist.");
+        }
     }
 
     private static void Identifier(string? value, string name) =>
         ContractValidation.Require(Guid.TryParseExact(value, "D", out var id) && id != Guid.Empty,
             $"{name} must be a nonempty UUID.");
+}
+
+public sealed record WorkbenchDevelopmentConfiguration
+{
+    public bool Enabled { get; init; }
+    public long AssignedIssueNumber { get; init; }
+    public string WorkerExecutable { get; init; } = "";
+    public string Model { get; init; } = "";
+    public string GitAuthorName { get; init; } = "";
+    public string GitAuthorEmail { get; init; } = "";
+
+    public void Validate()
+    {
+        ContractValidation.Require(AssignedIssueNumber > 0, "Specify the explicitly assigned GitHub issue number.");
+        ContractValidation.Text(WorkerExecutable, 1024, "workerExecutable");
+        ContractValidation.Require(WorkerExecutable.StartsWith('/') && WorkerExecutable != "/" &&
+            !WorkerExecutable.Contains('\\') && !WorkerExecutable.Any(char.IsControl) &&
+            !WorkerExecutable.Split('/').Any(part => part is "." or ".."),
+            "Worker executable must be an installed absolute Linux path without traversal.");
+        ContractValidation.Text(Model, 128, "model");
+        ContractValidation.Text(GitAuthorName, 128, "Git author name");
+        ContractValidation.Text(GitAuthorEmail, 254, "Git author email");
+    }
 }
