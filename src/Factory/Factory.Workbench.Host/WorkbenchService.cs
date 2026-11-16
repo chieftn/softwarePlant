@@ -10,7 +10,7 @@ internal sealed class WorkbenchService(string root, string release, bool diagnos
     {
         try
         {
-            logger.LogInformation("Workbench service is starting. Certificate-authenticated plant connection is enabled for enrolled machines; execution is disabled.");
+            logger.LogInformation("Workbench service is starting. Worker setup runs only on an administrator request; mission execution requires explicit local and plant authorization.");
             await WorkbenchRuntime.RunAsync(root, release, diagnostic, stoppingToken, logger);
             lifetime.StopApplication();
         }

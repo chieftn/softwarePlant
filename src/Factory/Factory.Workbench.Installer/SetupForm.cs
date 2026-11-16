@@ -45,7 +45,7 @@ internal sealed class SetupForm : Form
         layout.Controls.Add(new Label
         {
             Text = "Development build: install only from a trusted source. Enrollment requires Factory.EnrollmentAdministrator.\n" +
-                "Assign the enrolled device to a plant through the website. Worker execution and WSL remain disabled.",
+                "Assign the enrolled device to a plant through the website. Prepare the SDK worker here; mission execution is enabled separately.",
             AutoSize = true, MaximumSize = new Size(700, 0), Margin = new Padding(0, 15, 0, 15)
         });
         layout.Controls.Add(signIn);
@@ -55,6 +55,9 @@ internal sealed class SetupForm : Form
         AddAction("Stop service", () => Lifecycle.StopAsync(lifetime.Token));
         AddAction("Recover service", () => Lifecycle.RecoverAsync(lifetime.Token));
         AddAction("Roll back runtime", () => Lifecycle.RollbackAsync(lifetime.Token));
+        var prepareWorker = new Button { Text = "3. Prepare SDK worker...", AutoSize = true };
+        prepareWorker.Click += async (_, _) => await Run(PrepareWorkerAsync, "worker-preparation");
+        actions.Controls.Add(prepareWorker);
         layout.Controls.Add(actions);
         layout.Controls.Add(DiagnosticControls.Create(this, diagnostics));
         layout.Controls.Add(status);
@@ -221,11 +224,43 @@ internal sealed class SetupForm : Form
             }
         }
         status.Text = $"Enrolled and connected to Factory: {binding.WorkbenchId}.\n" +
-            "Use Enrollments in the Factory website to assign this device to a plant. The service reconnects at boot; execution remains notReady.";
+            "Use Enrollments in the Factory website to assign this device to a plant. Next: Prepare SDK worker.";
         diagnostics.Record("service-authentication", "connected", enrollmentId: binding.EnrollmentId);
         enrollment = null;
         http?.Dispose();
         http = null;
+    }
+
+    private async Task PrepareWorkerAsync()
+    {
+        if (MessageBox.Show(this,
+            "Prepare this machine's dedicated Factory Linux environment?\n\n" +
+            "Setup will install WSL if missing (Windows may require a restart), import the bundled Ubuntu image under " +
+            "the existing service identity, download Linux dependencies, and check worker/SDK startup and shutdown.\n\n" +
+            "Existing personal WSL distributions are not used or changed. No model call, issue claim or publication is started.",
+            "Prepare SDK worker", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
+            return;
+        var commands = new WslCommands();
+        WslCommandResult? available = null;
+        try { available = await commands.RunAsync(["--status"], null, lifetime.Token); }
+        catch (System.ComponentModel.Win32Exception error) when (error.NativeErrorCode == 2)
+        {
+            throw new InvalidOperationException("Windows does not provide wsl.exe. Install the supported WSL Windows component before worker setup.", error);
+        }
+        if (available.ExitCode != 0)
+        {
+            status.Text = "Installing the WSL prerequisite. Windows may require a restart; enrollment will be retained.";
+            var installed = await commands.RunAsync(["--install", "--no-distribution", "--web-download"], null, lifetime.Token);
+            if (installed.ExitCode is not (0 or 3010))
+                throw new IOException($"WSL installation failed ({installed.ExitCode}). {installed.Error} {installed.Output}");
+            var check = await commands.RunAsync(["--status"], null, lifetime.Token);
+            if (installed.ExitCode == 3010 || check.ExitCode != 0)
+                throw new InvalidOperationException("Windows requires a restart to finish WSL installation. Restart, reopen Factory Workbench Setup and select Prepare SDK worker. Enrollment is retained.");
+        }
+        await new WorkbenchWorkerSetup(root, service).PrepareAsync(
+            progress => status.Text = $"{progress.Stage}: {progress.Detail}", lifetime.Token);
+        status.Text = "SDK worker prepared. Worker/SDK startup and full Linux shutdown passed under the service identity.\n" +
+            "Repository and model credentials will be supplied by Factory for an authorized mission. No model call or workflow has started.";
     }
 
     private Task UnenrollAsync()

@@ -168,6 +168,12 @@ public sealed class SetupDiagnostics
             if (remaining <= 0)
                 writer.WriteLine("[MSI log truncated at 20 MiB]");
         }
+        if (File.Exists(WslWorkerEnvironment.StatusPath(root)))
+        {
+            var worker = LocalState.Read<WorkerSetupStatus>(WslWorkerEnvironment.StatusPath(root));
+            using var writer = new StreamWriter(archive.CreateEntry("worker-setup.json").Open());
+            writer.Write(JsonSerializer.Serialize(worker with { Detail = Redact(worker.Detail) }, Json));
+        }
         using var summary = new StreamWriter(archive.CreateEntry("summary.json").Open());
         var installation = File.Exists(Path.Combine(root, "installation.json")) ? LocalState.ReadInstallation(root) : null;
         summary.Write(JsonSerializer.Serialize(new

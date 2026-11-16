@@ -10,13 +10,13 @@ public sealed class WorkbenchFullRemoval(string root, IWorkbenchService service,
     private static readonly HashSet<string> StateFiles = new(StringComparer.Ordinal)
     {
         "config.json", "installation.json", "enrollment.json", "binding.json", "unenrollment.json",
-        "installer-transaction.json", "maintenance.lock", "removal-intent.json"
+        "installer-transaction.json", "maintenance.lock", "removal-intent.json", "worker-setup-request.json"
     };
     private static readonly HashSet<string> RuntimeFiles = new(StringComparer.Ordinal)
     {
         "runtime.json", "runtime-failure.log", "runtime.lock", "plant-reports.lock",
         "pending-registration.json", "pending-presence.json", "pending-factory-presence.json",
-        "line-configuration.json", "pending-configuration-observation.json"
+        "line-configuration.json", "pending-configuration-observation.json", "worker-setup.json"
     };
     private string IntentPath => Path.Combine(root, "removal-intent.json");
 
@@ -30,6 +30,8 @@ public sealed class WorkbenchFullRemoval(string root, IWorkbenchService service,
             intent = File.Exists(IntentPath) ? ReadIntent() : Begin();
             LocalState.Write(IntentPath, intent);
         }
+        if (File.Exists(Path.Combine(WslWorkerEnvironment.EnvironmentDirectory(root), "environment.json")))
+            await new WorkbenchWorkerSetup(root, service).RemoveAsync(cancellationToken);
         await new WorkbenchLifecycle(root, service).PrepareInstallerUninstallAsync(transaction, cancellationToken);
         using (LocalState.Lock(root, "maintenance.lock"))
         using (LocalState.LockRuntime(root))
@@ -108,6 +110,8 @@ public sealed class WorkbenchFullRemoval(string root, IWorkbenchService service,
                 DeleteIfEmpty(Path.Combine(installation.InstallDirectory, "releases"));
                 DeleteIfEmpty(installation.InstallDirectory);
             }
+            if (Directory.Exists(WslWorkerEnvironment.EnvironmentDirectory(root)))
+                Directory.Delete(WslWorkerEnvironment.EnvironmentDirectory(root));
             var runtime = LocalState.RuntimeDirectory(root);
             foreach (var path in Directory.EnumerateFiles(runtime).Where(path => Path.GetFileName(path) != "runtime.lock"))
                 File.Delete(path);
@@ -177,6 +181,11 @@ public sealed class WorkbenchFullRemoval(string root, IWorkbenchService service,
             var name = Path.GetFileName(path);
             if (name == "logs" && Directory.Exists(path))
                 SetupDiagnostics.ValidateDirectory(path);
+            else if (name == "linux" && Directory.Exists(path))
+            {
+                if (Directory.EnumerateFileSystemEntries(path).Any())
+                    throw new InvalidDataException("Remove the owned WSL environment through the service before purging its state.");
+            }
             else if (name == "runtime" && Directory.Exists(path))
             {
                 if (Directory.EnumerateFileSystemEntries(path).Any(file =>

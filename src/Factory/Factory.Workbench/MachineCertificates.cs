@@ -201,6 +201,25 @@ public static class MachineCertificates
         runtime.SetAccessControl(runtimeAcl);
     }
 
+    public static void GrantServiceLinuxAccess(string root, WorkbenchInstallation installation)
+    {
+        var path = WslWorkerEnvironment.EnvironmentDirectory(root);
+        if (File.Exists(path) || Directory.Exists(path) &&
+            (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Linux environment storage cannot be a file or link.");
+        var directory = Directory.CreateDirectory(path);
+        var acl = new DirectorySecurity();
+        acl.SetAccessRuleProtection(true, false);
+        acl.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+        foreach (var type in new[] { WellKnownSidType.BuiltinAdministratorsSid, WellKnownSidType.LocalSystemSid })
+            acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(type, null), FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        var service = (SecurityIdentifier)new NTAccount(installation.ServiceAccount).Translate(typeof(SecurityIdentifier));
+        acl.AddAccessRule(new FileSystemAccessRule(service, FileSystemRights.Modify,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        directory.SetAccessControl(acl);
+    }
+
     public static X509Certificate2 GetOrCreate(string root)
     {
         BindingStore.RequireEnrollmentAllowed(root);

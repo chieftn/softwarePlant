@@ -19,6 +19,7 @@ public sealed class WslMissionWorker : IDisposable
     private readonly string root;
     private readonly Process process;
     private readonly CancellationTokenSource requests = new();
+    private readonly SemaphoreSlim termination = new(1, 1);
     private readonly TaskCompletionSource<OwnedLinuxWorker> started = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private WslWorkerJournal journal;
     public DevelopmentMission Mission { get; }
@@ -152,8 +153,7 @@ public sealed class WslMissionWorker : IDisposable
         {
             try
             {
-                if (journal.Process is not null)
-                    TerminationConfirmed = await StopRecordedAsync(configuration, journal, CancellationToken.None);
+                await ConfirmTerminationAsync();
             }
             finally
             {
@@ -254,9 +254,9 @@ public sealed class WslMissionWorker : IDisposable
         process.StandardInput.Close();
         try
         {
-            if (journal.Process is not null)
+            if (journal.Process is not null || journal.Distribution == WslWorkerEnvironment.DistributionName(configuration.InstallationId))
             {
-                TerminationConfirmed = await StopRecordedAsync(configuration, journal, CancellationToken.None);
+                await ConfirmTerminationAsync();
                 if (TerminationConfirmed)
                     await plant.WriteAsync(HttpMethod.Post, Endpoint + "/terminated", new MissionTerminationRequest(Mission.Id, true),
                         Guid.NewGuid().ToString("D"), cancellationToken);
@@ -275,9 +275,30 @@ public sealed class WslMissionWorker : IDisposable
         File.Delete(JournalPath);
     }
 
-    public static async Task<bool> StopRecordedAsync(WorkbenchConfiguration configuration, WslWorkerJournal journal,
-        CancellationToken cancellationToken)
+    private async Task ConfirmTerminationAsync()
     {
+        await termination.WaitAsync();
+        try
+        {
+            if (!TerminationConfirmed)
+                TerminationConfirmed = await StopRecordedAsync(configuration, journal, CancellationToken.None, root);
+        }
+        finally { termination.Release(); }
+    }
+
+    public static async Task<bool> StopRecordedAsync(WorkbenchConfiguration configuration, WslWorkerJournal journal,
+        CancellationToken cancellationToken, string? root = null)
+    {
+        if (root is not null && journal.Distribution == WslWorkerEnvironment.DistributionName(configuration.InstallationId))
+        {
+            var installation = LocalState.ReadInstallation(root);
+            if (installation.InstallationId != configuration.InstallationId ||
+                journal.LinuxUser != WslWorkerEnvironment.LinuxUser || journal.WorkspaceRoot != WslWorkerEnvironment.Workspace ||
+                !journal.Executable.StartsWith("/opt/factory/releases/", StringComparison.Ordinal))
+                throw new InvalidDataException("Recorded worker environment does not match the owned installation.");
+            await new WslWorkerEnvironment(root, installation, new WslCommands()).TerminateAsync(cancellationToken);
+            return true;
+        }
         if (journal.Process is null)
             return false;
         var start = new ProcessStartInfo("wsl.exe")
@@ -319,6 +340,7 @@ public sealed class WslMissionWorker : IDisposable
     public void Dispose()
     {
         requests.Dispose();
+        termination.Dispose();
         process.Dispose();
     }
 }

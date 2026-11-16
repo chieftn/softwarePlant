@@ -14,7 +14,7 @@ internal static class WorkerProgram
         Console.OutputEncoding = new UTF8Encoding(false);
         if (args is ["--help"] or [])
         {
-            Console.WriteLine("Factory Linux worker: run --workspace-root <path> --instance <uuid> --nonce <hex> [--resume].\nRequires an explicitly enabled mission/credential packet over owned stdin; no interactive auth.");
+            Console.WriteLine("Factory Linux worker: check --workspace-root <path>, or run --workspace-root <path> --instance <uuid> --nonce <hex> [--resume].\nCheck starts the SDK without a model call. Run requires an explicitly enabled mission/credential packet over owned stdin; no interactive auth.");
             return 0;
         }
         if (args is ["git-credential", var credentialOperation])
@@ -49,6 +49,12 @@ internal static class WorkerProgram
         {
             if (!OperatingSystem.IsLinux())
                 throw new PlatformNotSupportedException("Factory coding execution requires the service-owned Linux worker.");
+            if (args is ["check", "--workspace-root", var checkRoot])
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                await WorkerReadiness.CheckAsync(checkRoot, deadline.Token);
+                return 0;
+            }
             if (args is ["stop", "--workspace-root", var stopRoot, "--mission", var stopMission, "--instance", var stopInstance, "--nonce", var stopNonce])
             {
                 var confirmed = await OwnedLinuxProcess.StopAsync(stopRoot, stopMission, stopInstance, stopNonce, CancellationToken.None);
@@ -126,6 +132,11 @@ internal static class WorkerProgram
         }
         catch (Exception error)
         {
+            if (args is ["check", "--workspace-root", _])
+            {
+                Console.Error.WriteLine($"Worker readiness failed: {error.GetType().Name}: {error.Message}");
+                return 1;
+            }
             Console.Error.WriteLine($"Worker stopped: {error.GetType().Name}. Reconcile owned execution and publication before retrying.");
             return 1;
         }

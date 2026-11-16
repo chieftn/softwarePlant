@@ -39,6 +39,9 @@ public sealed class SetupDiagnosticsTests : IDisposable
         var diagnostics = new SetupDiagnostics(root);
         var msi = Path.Combine(directory, "installer.log");
         File.WriteAllText(msi, "Action failed 1603\nBearer fixture-token\npassword=fixture-password");
+        LocalState.Write(WslWorkerEnvironment.StatusPath(root), new WorkerSetupStatus(Guid.NewGuid().ToString("D"),
+            Guid.NewGuid().ToString("D"), "test-release", 1, DateTimeOffset.UtcNow, "failed", "worker-sdk-check",
+            "SDK startup failed. Bearer fixture-worker-token password=fixture-worker-password"));
         var zip = Path.Combine(directory, "diagnostics.zip");
         diagnostics.Export(zip, root, msi);
         using var archive = ZipFile.OpenRead(zip);
@@ -47,6 +50,11 @@ public sealed class SetupDiagnosticsTests : IDisposable
         Assert.Contains("1603", contents);
         Assert.DoesNotContain("fixture-token", contents);
         Assert.DoesNotContain("fixture-password", contents);
+        using var workerReader = new StreamReader(archive.GetEntry("worker-setup.json")!.Open());
+        var worker = workerReader.ReadToEnd();
+        Assert.Contains("worker-sdk-check", worker);
+        Assert.DoesNotContain("fixture-worker-token", worker);
+        Assert.DoesNotContain("fixture-worker-password", worker);
     }
 
     [Fact]

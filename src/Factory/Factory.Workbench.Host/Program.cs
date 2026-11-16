@@ -15,7 +15,8 @@ if (args.Length == 0 || args is ["--help"] or ["help"])
           run [--root <state-directory>]       Foreground diagnostic host; Ctrl+C stops it
 
         Installation/configuration/maintenance belong to Factory.Workbench.Setup.
-        No WSL, enrollment, plant connection, or worker execution is implemented.
+        Enrolled services connect using their machine identity. Prepare the SDK worker
+        through Factory Workbench Setup; execution requires separate local and plant authorization.
         """);
     return 0;
 }

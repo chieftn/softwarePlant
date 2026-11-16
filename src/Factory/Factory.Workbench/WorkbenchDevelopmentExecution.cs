@@ -36,6 +36,12 @@ public sealed class WorkbenchDevelopmentExecution(PlantHttp plant, WorkbenchBind
             Reason = "Local policy must explicitly permit project verification and publication before claiming an issue.";
             return;
         }
+        if (!WslWorkerEnvironment.IsReady(root, configuration, LocalState.ReadInstallation(root).ActiveRelease))
+        {
+            State = "notReady";
+            Reason = "Prepare the SDK worker in Factory Workbench Setup. Service-identity worker/SDK readiness is required before claiming work.";
+            return;
+        }
         var source = current.ProductionLine.Definition;
         if (!configuration.AllowedRepositories.Contains(source.Source.Repository, StringComparer.OrdinalIgnoreCase) ||
             !configuration.AllowedRepositories.Contains(source.Tasks.Repository, StringComparer.OrdinalIgnoreCase))
@@ -125,7 +131,7 @@ public sealed class WorkbenchDevelopmentExecution(PlantHttp plant, WorkbenchBind
         if (!File.Exists(path) || worker is not null)
             return;
         var previous = LocalState.Read<WslWorkerJournal>(path);
-        if (!await WslMissionWorker.StopRecordedAsync(configuration, previous, cancellationToken))
+        if (!await WslMissionWorker.StopRecordedAsync(configuration, previous, cancellationToken, root))
             throw new IOException("Prior Linux execution termination is unconfirmed; new work is blocked even when execution is disabled.");
         await plant.WriteAsync(HttpMethod.Post, $"v1/enrollments/{binding.EnrollmentId}/mission/terminated",
             new MissionTerminationRequest(previous.MissionId, true), Guid.NewGuid().ToString("D"), cancellationToken);

@@ -1,6 +1,62 @@
 # Live Workbench Installation Test
 
-Last updated: November 14, 2026 (Pacific).
+Last updated: November 16, 2026 (Pacific).
+
+## Linux bootstrap correction - current candidate 0.1.7
+
+The tester's `0.1.6` preparation reached Linux prerequisite installation under the
+service identity, then failed with `E: Invalid operation update`. Inspection of
+the shipped assembly confirmed seven CRLF line breaks in the raw bootstrap
+string: `/bin/sh` received `apt-get update\r`. The shell transport now normalizes
+all scripts to LF, independent of checkout line endings. The CRLF and CR cases
+failed before the fix; all 13 focused environment tests passed afterward.
+
+Upgrade in place with
+`C:\repos\softwarePlant\src\Factory\artifacts\installer\sdk-017-001\msi\en-US\Factory.Workbench.0.1.7.msi`,
+then select **3. Prepare SDK worker...** again. The existing owned distribution
+and enrollment are reused; do not uninstall or delete the Linux environment.
+The MSI is 350,802,256 bytes, SHA-256
+`ACAE1E963F5C88782FBE03C364F6CAE9C66E0A1B28EE3881ADC3F8B68FA92E2B`.
+All 812 embedded files/four cabinets and 527 runtime files, including 297 worker
+files, matched their published sources/manifests. Release evidence is in
+`src\Factory\artifacts\installer\sdk-017-001\release-handoff.json`.
+Unsigned; ICE skipped. No WSL, installer, helper or SDK runtime was executed on
+the shared build machine. Live SDK readiness/model execution remains unverified.
+
+## SDK worker setup candidate - November 16
+
+The tester reported that the `0.1.5` upgrade completed on retry. Its first attempt
+failed with access denied while renaming the staged release; the supplied ACLs
+already granted SYSTEM/Administrators full control. The retry does not establish
+the cause, and no ACL changes were requested or applied.
+
+The replacement **unsigned development MSI 0.1.6**, release
+`workbench-0.1.6-sdk-setup-002`, adds **3. Prepare SDK worker...** to the existing
+setup window. Upgrade in place, then use that action. It offers WSL prerequisite
+installation, reports a required Windows restart, and delegates Linux environment
+registration/setup to the existing Windows service identity. It uses its own
+installation-named distribution, a checksum-pinned Ubuntu image, and the packaged
+Linux worker/Copilot runtime. It does not adopt a personal distribution or enable
+mission execution.
+
+Preparation checks unprivileged workspace/Git access and actual SDK startup
+without a model call, then verifies whole-distribution shutdown. Progress and the
+failed stage appear in setup; **Save diagnostics...** includes the bounded,
+redacted worker result. Physical service-account WSL registration/startup,
+cold-boot acceptance and real model/workflow execution remain unverified.
+
+| Candidate | Value |
+|---|---|
+| MSI | `C:\repos\softwarePlant\src\Factory\artifacts\installer\sdk-016-002\msi\en-US\Factory.Workbench.0.1.6.msi` |
+| Bytes | 350,785,872 |
+| SHA-256 | `D8364467155683FE21507300536949D06E86980C89A91673559C218996CDBD89` |
+| Static evidence | All 812 embedded files across four cabinets matched the image; 527 runtime files including 297 Linux worker files matched the manifest. Production profile, helper and pinned Ubuntu/Copilot payloads matched. |
+| Source validation | 77 targeted provisioning, packaging/lifecycle, SDK-boundary and diagnostic tests passed. |
+| Native acceptance | Not installed by the assistant; WSL/SDK were not invoked on the shared build machine. Unsigned; ICE validation skipped, not passed. |
+| Release evidence | `src\Factory\artifacts\installer\sdk-016-002\release-handoff.json` |
+
+The earlier lifecycle/enrollment history below describes the `0.1.4` acceptance
+baseline; use the `0.1.6` candidate above for the next worker-setup test.
 
 **Status: tester reports successful enrollment after the servicing-ACL and service recovery corrections.** MSI `0.1.4` / `workbench-0.1.4-007` is unchanged. The tester completed the guarded failed-state repair. `006` then passed state protection and all helper-file checks but rejected the first helper-directory write ACL. The supplied test-machine Program Files ACL contains TrustedInstaller's container-only inheritance: a privileged Windows servicing writer incorrectly classified as untrusted. An in-memory regression reproduced that rejection before the correction. `007` recognizes only that exact servicing SID alongside SYSTEM and Administrators; it grants no permissions and still rejects ordinary Users and unrelated service writers, including generic write/all masks. **Do not repeat the repair. Full machine lifecycle acceptance, including reboot, upgrade and cleanup, remains outstanding.** Packages through `lifecycle-014-006` are superseded.
 

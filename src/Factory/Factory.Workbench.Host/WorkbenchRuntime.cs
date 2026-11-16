@@ -16,6 +16,25 @@ public static class WorkbenchRuntime
         var configuration = ConfigurationStore.Read(root);
         if (configuration.InstallationId != installation.InstallationId)
             throw new InvalidDataException("Configuration and installed machine identities do not match.");
+        var environment = new WslWorkerEnvironment(root, installation, new WslCommands());
+        var requestPath = WslWorkerEnvironment.RequestPath(root);
+        string? processedWorkerRequest = null;
+        if (File.Exists(requestPath))
+        {
+            var request = LocalState.Read<WorkerSetupRequest>(requestPath);
+            if (request.ReleaseId == release)
+            {
+                var previous = File.Exists(WslWorkerEnvironment.StatusPath(root))
+                    ? LocalState.Read<WorkerSetupStatus>(WslWorkerEnvironment.StatusPath(root)) : null;
+                if (previous?.RequestId != request.Id || previous.State == "working")
+                    await ProcessWorkerSetup(request);
+                else if (previous.State == "ready")
+                    await ProcessWorkerSetup(request with { Operation = "check" });
+            }
+            processedWorkerRequest = request.Id;
+            if (request.Operation == "remove")
+                return;
+        }
         if (!diagnostic && !installation.RunRequested)
             return;
         BindingStore.RequireEnrollmentAllowed(root);
@@ -31,6 +50,19 @@ public static class WorkbenchRuntime
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 BindingStore.RequireEnrollmentAllowed(root);
+                if (File.Exists(requestPath))
+                {
+                    var request = LocalState.Read<WorkerSetupRequest>(requestPath);
+                    if (request.Id != processedWorkerRequest)
+                    {
+                        if (diagnostic)
+                            throw new InvalidOperationException("Worker preparation requires the Windows service, not a diagnostic host.");
+                        if (configuration.Development?.Enabled == true)
+                            throw new InvalidOperationException("Disable mission execution before preparing the Linux environment.");
+                        await ProcessWorkerSetup(request);
+                        processedWorkerRequest = request.Id;
+                    }
+                }
                 if (File.Exists(Path.Combine(root, "binding.json")))
                 {
                     if (!OperatingSystem.IsWindows())
@@ -106,6 +138,31 @@ public static class WorkbenchRuntime
             {
                 certificate?.Dispose();
                 http?.Dispose();
+            }
+
+        }
+
+        async Task ProcessWorkerSetup(WorkerSetupRequest request)
+        {
+            if (!OperatingSystem.IsWindows() || diagnostic)
+                throw new InvalidOperationException("Worker setup requires the dedicated Windows service, not a diagnostic host.");
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var expectedIdentity = new System.Security.Principal.NTAccount(installation.ServiceAccount)
+                .Translate(typeof(System.Security.Principal.SecurityIdentifier));
+            if (identity.User is null || !identity.User.Equals(expectedIdentity))
+                throw new InvalidOperationException("Worker setup must run under the dedicated workbench service identity.");
+            try { await environment.ProcessAsync(request, cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                logger?.LogWarning("Worker setup cancelled during service shutdown; its failed-stage record is retained.");
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or
+                System.ComponentModel.Win32Exception or System.Text.Json.JsonException or AggregateException)
+            {
+                if (logger is not null)
+                    logger.LogError(error, "Worker setup failed; see worker-setup.json for the failed stage.");
+                else
+                    Console.Error.WriteLine($"Worker setup failed: {error.Message}. See worker-setup.json.");
             }
         }
     }
