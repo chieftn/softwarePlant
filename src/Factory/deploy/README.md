@@ -39,6 +39,75 @@ Use the application's OIDC authentication, not App Service Easy Auth. Users need
 
 Complete the [privileged enrollment bootstrap](../bootstrap/tenant/README.md#enable-workbench-enrollment) only after explicit approval of the Graph grants. Set `installerClientId` and `enrollmentEnabled=true` in the hosting parameters when the public installer and managed provisioner are configured. Production provisioning is managed-identity-only; never reuse the data identity. Preserve the existing browser-authentication parameters. The [live installation working document](../../../docs/workbench-installation-test.md) tracks package handoff and machine acceptance separately from service deployment.
 
+### Managed GitHub repository connections
+
+The website's **Repository connections** page automates GitHub App registration,
+private-key storage, installation verification and reusable line connection
+references. It infers the vault from the existing `Factory:Web:DataProtectionKeyId`
+and uses the existing data identity. No per-connection App Service setting or
+manual PEM upload is required.
+
+Before using this feature, review and deploy
+[`github-connections.production.bicep`](github-connections.production.bicep) once,
+with the existing `vaultName` and `dataIdentityName`. It defines a custom role
+containing only Key Vault secret-value get/set and assigns it at the selected
+vault. **That permission covers all secrets in that vault**, not just GitHub
+secret names. It cannot list, delete or purge secrets, manage keys, or change
+RBAC. This is a new permission requiring explicit approval; existing website
+secret-read and cookie-key grants alone are not sufficient. The module does not
+redeploy the app/settings/network, create a vault or call GitHub.
+
+The service checks actual secret write/read access before offering GitHub app
+creation, using the noncredential `factory-github-onboarding-access-check`
+secret. Registration bundles are then stored as `github-<connection UUID N>`
+secrets. Only identifiers, ownership, repository allowlists and lifecycle state
+are persisted in Cosmos. Tokens and private keys are never included in forms,
+connection records or line definitions.
+
+After service deployment, sign in, open **Repository connections**, give the
+connection a name, optionally select an organization, and choose whether it may
+publish. Approve app creation on GitHub, install it with **Only select repositories**,
+then select **Verify / refresh repository access**. The first implementation
+supports installations on the private app's owning account. Reuse that connection
+in any of your production lines; no GitHub setup is required on their machines.
+Connections are scoped to their Factory owner's Entra identity; organization-wide
+sharing/delegation is not implemented. Existing configuration-backed references
+remain supported.
+
+Read-only setup requests Contents, Issues and Pull requests read. Publication
+opt-in requests Contents and Pull requests write; Issues stays read only.
+Changing this permission profile later requires a new reviewed setup; repository
+selection can be changed on GitHub and refreshed. Disabled connections deny new
+Factory grants and mission authorization, but cannot undo already-issued tokens
+or remote side effects. GitHub app uninstall/key rotation is a separate operator
+action. Interrupted manifest exchanges never replay credential creation; the
+detail page can recover a registration already saved in Key Vault. If no key was
+saved, reconcile/delete the incomplete GitHub App before starting another setup.
+Once the one-use exchange starts, a bounded 45-second completion path attempts to
+preserve the key even if the initiating browser disconnects.
+
+Deployment and permission verification do not establish that the signed-in
+website flow, service-identity vault writes or GitHub installation work end to end.
+Complete that acceptance with the first connection. Model access and client
+rollout remain separate.
+
+Local validation passed 95 focused onboarding, ownership, browser, workload,
+mission and API-contract cases. The new Bicep module compiled offline, and
+changed-C# whitespace verification and `git diff --check` passed.
+
+Production rollout completed November 16, 2026 with explicit approval of the
+vault-wide secret get/set grant. Deployment
+`940198a7-2abf-41ad-9419-9496f4ee9250` is active on
+`https://factory-prod-qm3qqqsg45-web.azurewebsites.net`; the exact custom role and
+vault-scoped data-identity assignment were verified. All 24 existing settings,
+authentication, identities and hosting/network configuration were preserved.
+Anonymous health, browser sign-in/PKCE and bearer-only API checks passed; agent
+execution remains disabled. Signed-in connection creation/vault storage/GitHub
+installation remain unverified. The ignored release folder
+`artifacts\service\github-onboarding-20261116-001` contains package/source hashes,
+preflight/postflight snapshots, ARM preview/deployment/permission evidence and
+HTTP acceptance. No client rollout or model activation was performed.
+
 ### Private cross-region Cosmos access
 
 [`backend-peering.bicep`](backend-peering.bicep) connects existing, non-overlapping application and Cosmos VNets in the same resource group. Supply `appVnetName` and `cosmosVnetName`. It creates both peering directions with virtual-network access enabled and forwarding/gateway transit disabled. It does not create a web app or database, grant data access, or enable public Cosmos access. Cross-region peering incurs traffic charges.
@@ -100,6 +169,7 @@ az bicep build --file .\src\Factory\deploy\service.production.bicep --stdout | O
 az bicep build --file .\src\Factory\deploy\website.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\website-credential.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\enrollment-identity.production.bicep --stdout | Out-Null
+az bicep build --file .\src\Factory\deploy\github-connections.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\backend-peering.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\main.bicep --stdout | Out-Null
 pwsh -NoProfile -File .\src\Factory\bootstrap\tests\Bootstrap.Tests.ps1

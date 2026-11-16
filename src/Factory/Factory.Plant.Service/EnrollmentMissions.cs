@@ -37,6 +37,7 @@ public sealed partial class EnrollmentOperations
         var definition = configuration.ProductionLine!.Definition;
         if (!definition.Policy.AllowShellExecution || !definition.Policy.AllowPublication)
             throw new ApiException(403, "development_not_permitted", "The assigned line does not permit verified PR execution.");
+        await plants.RequireRepositoryAuthorityAsync(configuration.ProductionLine!, cancellationToken, publication: true);
         var scope = Records.EnrollmentScope(id);
         var slot = await store.ReadAsync(scope, "development-mission", cancellationToken);
         var previous = slot is null ? null : Records.Require<DevelopmentMissionRecord>(slot.Record);
@@ -153,6 +154,7 @@ public sealed partial class EnrollmentOperations
             definition.Tasks.ConnectionReference != original.ProductionLine.Definition.Tasks.ConnectionReference ||
             mission.Progress.State is "reserving" or "rejected")
             throw new ApiException(409, "mission_revoked", "Current membership, line binding or repository authority no longer permits this frozen mission.");
+        await plants.RequireRepositoryAuthorityAsync(configuration.ProductionLine!, cancellationToken, publication: true);
         return mission;
     }
 

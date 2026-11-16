@@ -7,6 +7,16 @@ namespace Factory.Plant.Service;
 
 public sealed partial class PlantOperations
 {
+    internal async Task RequireRepositoryAuthorityAsync(ProductionLineView line, CancellationToken cancellationToken,
+        bool publication = false)
+    {
+        var caller = new ApiCaller(line.Owner, settings.ClientId);
+        await connections.RequireReferenceAsync(line.Definition.Source.ConnectionReference,
+            line.Definition.Source.Repository, caller, cancellationToken, publication);
+        await connections.RequireReferenceAsync(line.Definition.Tasks.ConnectionReference,
+            line.Definition.Tasks.Repository, caller, cancellationToken);
+    }
+
     public async Task<Page<ProductionLineView>> ListProductionLinesAsync(ApiCaller caller, int size,
         string? token, CancellationToken cancellationToken)
     {
@@ -49,6 +59,8 @@ public sealed partial class PlantOperations
                 return replay.ProductionLine ?? throw new InvalidOperationException("The line receipt has no result.");
             if (existing is not null)
                 throw new ApiException(409, "line_state_conflict", "The line exists without this creation receipt.");
+            await connections.RequireReferenceAsync(request.Source.ConnectionReference, request.Source.Repository, caller, cancellationToken);
+            await connections.RequireReferenceAsync(request.Tasks.ConnectionReference, request.Tasks.Repository, caller, cancellationToken);
             var now = clock.GetUtcNow();
             var line = new ProductionLineView("1", id, Revision(), caller.Principal, now, now, request);
             if (await store.CommitAsync(scope,
@@ -81,6 +93,8 @@ public sealed partial class PlantOperations
                 return replay.ProductionLine ?? throw new InvalidOperationException("The line receipt has no result.");
             if (current.Line.Revision != ifMatch)
                 throw new ApiException(412, "etag_mismatch", "The line has changed. Refresh before updating it.");
+            await connections.RequireReferenceAsync(request.Source.ConnectionReference, request.Source.Repository, caller, cancellationToken);
+            await connections.RequireReferenceAsync(request.Tasks.ConnectionReference, request.Tasks.Repository, caller, cancellationToken);
             var now = clock.GetUtcNow();
             var line = current.Line with { Revision = Revision(), UpdatedAt = now, Definition = request };
             if (await store.CommitAsync(scope,

@@ -5,6 +5,9 @@ using System.Text;
 using System.Text.Json;
 using Factory.Contracts;
 using Factory.Plant.Service;
+using Factory.Plant.Service.Storage;
+using Factory.Plant.Service.Web;
+using Microsoft.AspNetCore.DataProtection;
 using Xunit;
 
 namespace Factory.Tests;
@@ -97,6 +100,68 @@ public sealed class RepositoryWorkloadTests
         error = await Assert.ThrowsAsync<ApiException>(() => reader.ResolveAsync(Configuration(), CancellationToken.None));
         Assert.Equal("repository_connection_unconfigured", error.Code);
         Assert.Empty(handler.Paths);
+    }
+
+    [Fact]
+    public async Task ManagedConnectionResolvesPinnedSpecsWithoutAppSettingsAndDisableBlocksFurtherGitHubCalls()
+    {
+        using var key = RSA.Create(2048);
+        var clock = new TestClock();
+        var handler = new GitHubFixture(clock, key);
+        var store = new TestRecordStore();
+        var reference = "github-" + Guid.NewGuid().ToString("N");
+        var configuration = Configuration();
+        configuration = configuration with
+        {
+            ProductionLine = configuration.ProductionLine! with
+            {
+                Definition = configuration.ProductionLine.Definition with
+                {
+                    Source = configuration.ProductionLine.Definition.Source with { ConnectionReference = reference }
+                }
+            }
+        };
+        store.Seed(new GitHubConnectionRecord
+        {
+            Id = reference,
+            ScopeId = $"github-connection:{reference}",
+            Principal = configuration.ProductionLine.Owner,
+            Name = "Managed source",
+            Organization = "product",
+            State = "connected",
+            AllowPublication = false,
+            CreatedAt = clock.Now,
+            AppId = 42,
+            Slug = "fixture-app",
+            Account = "product",
+            InstallationId = 84,
+            Repositories = ["product/source"]
+        });
+        var managed = new ManagedGitHubConnections(store, new SavedKey(key), new NoSetup(),
+            new EphemeralDataProtectionProvider(), new WebsiteSettings(), clock);
+        using var reader = new GitHubRepositoryReader(new(), clock, handler, managed);
+        (await reader.ResolveAsync(configuration, CancellationToken.None)).Validate();
+        var calls = handler.Paths.Count;
+        await managed.DisableAsync(reference, new(configuration.ProductionLine.Owner, ApiTestApplication.Audience), CancellationToken.None);
+        var error = await Assert.ThrowsAsync<ApiException>(() => reader.ResolveAsync(configuration, CancellationToken.None));
+        Assert.Equal("repository_not_permitted", error.Code);
+        Assert.Equal(calls, handler.Paths.Count);
+    }
+
+    private sealed class SavedKey(RSA key) : IGitHubConnectionSecrets
+    {
+        public void RequireConfigured() => throw new InvalidOperationException();
+        public Task CheckAccessAsync(string reference, CancellationToken cancellationToken) => throw new InvalidOperationException();
+        public Task SaveAsync(string reference, GitHubAppRegistration registration, CancellationToken cancellationToken) => throw new InvalidOperationException();
+        public Task<GitHubAppRegistration> ReadAsync(string reference, CancellationToken cancellationToken) =>
+            Task.FromResult(new GitHubAppRegistration(42, "fixture-app", "product", key.ExportRSAPrivateKeyPem()));
+    }
+
+    private sealed class NoSetup : IGitHubOnboardingClient
+    {
+        public Task<GitHubAppRegistration> ConvertAsync(string code, CancellationToken cancellationToken) => throw new InvalidOperationException();
+        public Task<GitHubInstallation> VerifyAsync(GitHubAppRegistration registration, bool publication, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException();
     }
 
     private static GitHubConnectionsSettings Settings(RSA key) => new()

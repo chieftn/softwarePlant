@@ -1,0 +1,45 @@
+@model Factory.Plant.Service.Storage.GitHubConnectionRecord
+@{
+    ViewData["Title"] = Model.Name;
+}
+<p><a href="/repository-connections">Back to connections</a></p>
+<h1>@Model.Name</h1>
+<p>Status: <strong>@Model.State</strong>. Connection reference: <code>@Model.Id</code>.</p>
+<p>Publication: @(Model.AllowPublication ? "permitted by this connection; separate line/machine policy still applies" : "disabled").</p>
+@if (Model.State is "installing" or "connected")
+{
+    <p>App: @Model.Slug. Account: @Model.Account.</p>
+    <p><a href="https://github.com/apps/@Model.Slug/installations/new" rel="noreferrer">Install or manage this app on GitHub</a>.
+        Choose <strong>Only select repositories</strong>, then verify below.</p>
+    <form action="/repository-connections/@Model.Id/verify" method="post" asp-antiforgery="true">
+        <button class="button" type="submit">Verify / refresh repository access</button>
+    </form>
+    @foreach (var repository in Model.Repositories)
+    {
+        <p><code>@repository</code></p>
+    }
+    @if (Model.State == "connected")
+    {
+        <p>This connection is available in your <a href="/production-lines">production-line definitions</a>.
+            Machines inherit the line; do not copy this app's private key to them.</p>
+    }
+}
+@if (Model.State == "exchanging")
+{
+    <p>Registration exchange was interrupted. Recover only if the generated registration reached Key Vault.
+        If recovery fails, reconcile or delete the incomplete GitHub App before starting another setup.</p>
+    <form action="/repository-connections/@Model.Id/recover" method="post" asp-antiforgery="true">
+        <button class="button" type="submit">Recover saved registration</button>
+    </form>
+}
+@if (Model.State == "pending")
+{
+    <p>App creation has not completed. Use the original setup page within one hour, or start a new connection.</p>
+}
+@if (Model.State != "disabled")
+{
+    <form action="/repository-connections/@Model.Id/disable" method="post" asp-antiforgery="true">
+        <p>Disabling blocks new Factory credentials. It does not uninstall the GitHub App or invalidate already-issued tokens.</p>
+        <button class="button secondary" type="submit">Disable connection</button>
+    </form>
+}

@@ -21,6 +21,7 @@ namespace Factory.Plant.Service.Storage;
 [JsonDerivedType(typeof(ConfigurationObservationRecord), "configurationObservation")]
 [JsonDerivedType(typeof(DevelopmentMissionRecord), "developmentMission")]
 [JsonDerivedType(typeof(DevelopmentIssueClaimRecord), "developmentIssueClaim")]
+[JsonDerivedType(typeof(GitHubConnectionRecord), "githubConnection")]
 public abstract record StoreRecord
 {
     public required string Id { get; init; }
@@ -31,6 +32,21 @@ public abstract record StoreRecord
 public abstract record PlantScopedRecord : StoreRecord
 {
     public required string PlantId { get; init; }
+}
+
+public sealed record GitHubConnectionRecord : StoreRecord
+{
+    public required EntraPrincipal Principal { get; init; }
+    public required string Name { get; init; }
+    public required string State { get; init; }
+    public required string Organization { get; init; }
+    public required bool AllowPublication { get; init; }
+    public required DateTimeOffset CreatedAt { get; init; }
+    public long AppId { get; init; }
+    public string Slug { get; init; } = "";
+    public string Account { get; init; } = "";
+    public long InstallationId { get; init; }
+    public string[] Repositories { get; init; } = [];
 }
 
 public sealed record DevelopmentMissionRecord : StoreRecord

@@ -10,6 +10,7 @@ public sealed partial class EnrollmentOperations
         var configuration = await ConfigurationAsync(id, caller, cancellationToken);
         if (!request.Matches(configuration))
             throw new ApiException(409, "configuration_changed", "The workload request was superseded or revoked.");
+        await plants.RequireRepositoryAuthorityAsync(configuration.ProductionLine!, cancellationToken);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(25));
         ResolvedRepositoryWorkload resolved;
@@ -23,6 +24,8 @@ public sealed partial class EnrollmentOperations
         }
         resolved.Validate();
         var current = await ConfigurationAsync(id, caller, cancellationToken);
+        if (current.ProductionLine is not null)
+            await plants.RequireRepositoryAuthorityAsync(current.ProductionLine, cancellationToken);
         if (!request.Matches(current) || !request.Matches(resolved.Configuration) ||
             resolved.Configuration.EnrollmentId != id || resolved.Configuration.WorkbenchId != current.WorkbenchId ||
             resolved.Configuration.PlantId != current.PlantId)

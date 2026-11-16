@@ -61,14 +61,17 @@ public sealed partial class GitHubRepositoryReader : IGitHubRepositoryReader, IG
     private readonly GitHubConnectionsSettings settings;
     private readonly TimeProvider clock;
     private readonly HttpClient http;
+    private readonly ManagedGitHubConnections? managed;
 
-    public GitHubRepositoryReader(GitHubConnectionsSettings settings, TimeProvider clock)
-        : this(settings, clock, new HttpClientHandler { AllowAutoRedirect = false }) { }
+    public GitHubRepositoryReader(GitHubConnectionsSettings settings, TimeProvider clock, ManagedGitHubConnections managed)
+        : this(settings, clock, new HttpClientHandler { AllowAutoRedirect = false }, managed) { }
 
-    internal GitHubRepositoryReader(GitHubConnectionsSettings settings, TimeProvider clock, HttpMessageHandler handler)
+    internal GitHubRepositoryReader(GitHubConnectionsSettings settings, TimeProvider clock, HttpMessageHandler handler,
+        ManagedGitHubConnections? managed = null)
     {
         this.settings = settings;
         this.clock = clock;
+        this.managed = managed;
         http = new(handler)
         {
             BaseAddress = new("https://api.github.com/"),
@@ -178,7 +181,10 @@ public sealed partial class GitHubRepositoryReader : IGitHubRepositoryReader, IG
     private async Task<RepositoryAccessCredential> InstallationTokenAsync(string reference, string repository,
         Dictionary<string, string> permissions, CancellationToken cancellationToken)
     {
-        if (!settings.Connections.TryGetValue(reference, out var connection))
+        GitHubAppConnection? connection;
+        if (ManagedGitHubConnections.IsReference(reference) && managed is not null)
+            connection = await managed.ResolveAsync(reference, repository, cancellationToken);
+        else if (!settings.Connections.TryGetValue(reference, out connection))
             throw new ApiException(503, "repository_connection_unconfigured", "The assigned repository connection is not configured.");
         connection.Validate();
         if (!connection.Repositories.Contains(repository, StringComparer.OrdinalIgnoreCase))
@@ -221,7 +227,7 @@ public sealed partial class GitHubRepositoryReader : IGitHubRepositoryReader, IG
         }
     }
 
-    private static string Jwt(GitHubAppConnection connection, DateTimeOffset now)
+    internal static string Jwt(GitHubAppConnection connection, DateTimeOffset now)
     {
         static string Encode(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var header = Encode(JsonSerializer.SerializeToUtf8Bytes(new { alg = "RS256", typ = "JWT" }));

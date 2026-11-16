@@ -127,6 +127,46 @@ public sealed class EnrollmentMissionTests
         Assert.Equal(delivery.Mission.Digest, Assert.Single(app.Store.All<DevelopmentMissionRecord>()).Mission.Digest);
     }
 
+    [Fact]
+    public async Task DisablingManagedSourceConnectionFencesAnActiveMissionEvenWithSeparateTaskConnection()
+    {
+        using var app = new MissionApplication();
+        using var owner = app.Human();
+        using var machine = app.Daemon();
+        var (plant, _) = await CreateAsync(owner, "Managed plant");
+        var enrollment = SeedMember(app, plant.Id);
+        var reference = "github-" + Guid.NewGuid().ToString("N");
+        app.Store.Seed(new GitHubConnectionRecord
+        {
+            Id = reference,
+            ScopeId = $"github-connection:{reference}",
+            Principal = new(ApiTestApplication.Tenant, ApiTestApplication.OwnerId),
+            Name = "Managed source",
+            Organization = "product",
+            State = "connected",
+            AllowPublication = true,
+            CreatedAt = app.Clock.Now,
+            AppId = 42,
+            Slug = "fixture-app",
+            Account = "product",
+            InstallationId = 84,
+            Repositories = ["product/source"]
+        });
+        var definition = Definition() with { Policy = new(true, true, 3, 30) };
+        var line = await CreateLineAsync(owner, definition with { Source = definition.Source with { ConnectionReference = reference } });
+        using var assignment = await owner.PutAsJsonAsync($"/v1/plants/{plant.Id}/production-line", new ProductionLineAssignment("1", 0, line.Id));
+        assignment.EnsureSuccessStatusCode();
+        var configuration = (await machine.GetFromJsonAsync<WorkbenchLineConfiguration>($"/v1/enrollments/{enrollment.Id}/configuration"))!;
+        var path = $"/v1/enrollments/{enrollment.Id}/mission";
+        await Claim(machine, path, Request(configuration));
+        await app.Services.GetRequiredService<ManagedGitHubConnections>().DisableAsync(reference,
+            new(new(ApiTestApplication.Tenant, ApiTestApplication.OwnerId), ApiTestApplication.Audience), CancellationToken.None);
+        using var denied = await machine.PostAsync(path + "/authorize", null);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Single(app.Store.All<DevelopmentIssueClaimRecord>());
+        Assert.Equal(0, app.Repository.WriteGrants);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

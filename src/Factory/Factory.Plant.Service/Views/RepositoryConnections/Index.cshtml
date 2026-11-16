@@ -1,0 +1,28 @@
+@model Factory.Plant.Service.Storage.GitHubConnectionRecord[]
+@{
+    ViewData["Title"] = "Repository connections";
+}
+<h1>Repository connections</h1>
+<p>Connect GitHub once, then reuse the connection across your production lines and their assigned machines.
+    Private keys stay in the service's Key Vault; no machine login or manual secret settings are required.</p>
+@foreach (var connection in Model)
+{
+    <p><a href="/repository-connections/@connection.Id">@connection.Name</a> &mdash; @connection.State</p>
+}
+<section class="panel">
+    <h2>Connect GitHub</h2>
+    <p>Factory creates a private GitHub App through your approval on GitHub. Install it using
+        <strong>Only select repositories</strong>, then return here to verify access.
+        For now, the installation must belong to the app's owning account.</p>
+    <form action="/repository-connections" method="post" asp-antiforgery="true">
+        <input type="hidden" name="operationKey" value="@Guid.NewGuid().ToString("D")" />
+        <label for="name">Connection name</label>
+        <input id="name" name="name" maxlength="64" required />
+        <label for="organization">GitHub organization (leave blank for your personal account)</label>
+        <input id="organization" name="organization" maxlength="39" />
+        <label><input type="checkbox" name="allowPublication" value="true" /> Permit source pushes and draft PRs</label>
+        <p>Unchecked: Contents, Issues and Pull requests read only. Checked: Contents and Pull requests write;
+            Issues remain read only. Line and machine policy must still separately permit publication.</p>
+        <button class="button" type="submit">Continue to GitHub setup</button>
+    </form>
+</section>

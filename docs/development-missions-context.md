@@ -110,3 +110,47 @@ evidence, exact credential/configuration boundaries and the morning decisions:
 unattended GitHub/model auth, project commands, WSL/CLI packaging and containment,
 issue/reviewer policy, evidence retrieval, operator recovery and separate rollout
 approval. PowerShell remains an authoring validator, not the SDK workflow.
+
+## Repository Connection Automation
+
+The user next authorized automating repository access rather than manually
+maintaining Key Vault/App Service connection settings. Local Factory changes now
+provide a **Repository connections** page: approve a GitHub App manifest, install
+it on selected repositories, and verify the resulting connection. The service
+stores its registration directly in the existing website vault and persists only
+nonsecret connection metadata in Cosmos. Production-line forms select reusable
+connections; assigned machines still receive only scoped short-lived credentials.
+
+The initial onboarding is owner-scoped and supports installations on the app's
+owning account. A connection can serve many lines/machines; it is not created per
+machine. Publication is an explicit setup opt-in, separate from line/machine
+policy. Disable/refresh, callback-state checks, vault preflight and interrupted
+registration recovery are implemented. Model authentication remains separate.
+
+At the local implementation handoff, rollout still needed service deployment and explicit approval of the one-time
+secret get/set grant described in `src\Factory\deploy\README.md` and
+`github-connections.production.bicep`. That grant covers secrets in the selected
+vault; no Azure permissions, secrets, GitHub Apps or installations were changed
+during local implementation. Existing configuration-backed references remain
+supported. Live onboarding acceptance has not been performed.
+
+### Production deployment - November 16, 2026
+
+The user approved service deployment and the disclosed vault-wide secret get/set
+grant. Both are now deployed. Service deployment
+`940198a7-2abf-41ad-9419-9496f4ee9250` is active and runtime-successful at
+`https://factory-prod-qm3qqqsg45-web.azurewebsites.net`. The custom role has exactly
+secret get/set and is assigned only at `kvojq4jibbz5tc2web` to the existing data
+identity. All 24 settings, authentication, identities and hosting/network
+fingerprints match preflight. Agent execution remains disabled.
+
+Health/homepage, protected browser routes, Entra authorization-code/PKCE redirects
+and bearer-only workload/mission routes passed anonymous live checks. Signed-in
+onboarding, service-identity vault writes and GitHub App installation still require
+the user's first **Repository connections** setup; they have not been accepted
+live. Model access and the installed client are unchanged.
+
+Release evidence is under
+`src\Factory\artifacts\service\github-onboarding-20261116-001`. This release includes
+uncommitted onboarding changes over `dd875b593b3f3bda077aa5b36740fbcbc41fc21f`;
+`package-evidence.json` records source hashes and all 387 verified archive entries.

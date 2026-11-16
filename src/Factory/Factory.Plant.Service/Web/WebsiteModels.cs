@@ -14,9 +14,12 @@ public sealed record WorkbenchDetailsPage(WorkbenchView Workbench, WorkbenchLine
 public sealed record EnrollmentsPage(Page<EnrollmentView> Enrollments, IReadOnlyList<PlantView> Plants);
 
 public sealed record ProductionLinesPage(Page<ProductionLineView> Lines);
+public sealed record RepositoryConnectionOption(string Id, string Name);
 
 public sealed class ProductionLineForm
 {
+    [Microsoft.AspNetCore.Mvc.ModelBinding.BindNever]
+    public RepositoryConnectionOption[] Connections { get; set; } = [];
     public string? LineId { get; set; }
     public string? Revision { get; set; }
     public string OperationKey { get; set; } = "";

@@ -7,8 +7,8 @@ using Microsoft.Azure.Cosmos;
 namespace Factory.Plant.Service.Web;
 
 [Authorize(Policy = WebsiteAuthentication.UserPolicy)]
-public sealed class ProductionLinesController(PlantOperations operations, ApiSettings settings,
-    ILogger<ProductionLinesController> logger) : Controller
+public sealed class ProductionLinesController(PlantOperations operations, ApiSettings settings, ManagedGitHubConnections connections,
+    GitHubConnectionsSettings configuredConnections, ILogger<ProductionLinesController> logger) : Controller
 {
     [HttpGet("/production-lines")]
     public async Task<IActionResult> Index(CancellationToken cancellationToken)
@@ -18,12 +18,13 @@ public sealed class ProductionLinesController(PlantOperations operations, ApiSet
     }
 
     [HttpGet("/production-lines/create")]
-    public IActionResult Create() => View("Edit", new ProductionLineForm { OperationKey = Guid.NewGuid().ToString("D") });
+    public async Task<IActionResult> Create(CancellationToken cancellationToken) => View("Edit", await WithConnections(
+        new ProductionLineForm { OperationKey = Guid.NewGuid().ToString("D") }, cancellationToken));
 
     [HttpGet("/production-lines/{lineId}")]
     public async Task<IActionResult> Detail(string lineId, CancellationToken cancellationToken) =>
-        View("Edit", ProductionLineForm.From(await operations.GetProductionLineAsync(PlantEndpoints.PlantId(lineId),
-            Caller(), cancellationToken)));
+        View("Edit", await WithConnections(ProductionLineForm.From(await operations.GetProductionLineAsync(PlantEndpoints.PlantId(lineId),
+            Caller(), cancellationToken)), cancellationToken));
 
     [HttpPost("/production-lines")]
     public Task<IActionResult> CreateLine([FromForm] ProductionLineForm form, CancellationToken cancellationToken) =>
@@ -50,7 +51,7 @@ public sealed class ProductionLinesController(PlantOperations operations, ApiSet
         catch (Exception exception) when (FormFailure(exception))
         {
             Report(exception);
-            return View("Edit", form);
+            return View("Edit", await WithConnections(form, cancellationToken));
         }
     }
 
@@ -89,6 +90,14 @@ public sealed class ProductionLinesController(PlantOperations operations, ApiSet
     }
 
     private ApiCaller Caller() => WebsiteAuthentication.Caller(User, settings);
+    private async Task<ProductionLineForm> WithConnections(ProductionLineForm form, CancellationToken cancellationToken)
+    {
+        form.Connections = (await connections.ListAsync(Caller(), cancellationToken)).Where(item => item.State == "connected")
+            .Select(item => new RepositoryConnectionOption(item.Id, item.Name))
+            .Concat(configuredConnections.Connections.Keys.Where(key => !ManagedGitHubConnections.IsReference(key))
+                .Select(key => new RepositoryConnectionOption(key, key + " (service configured)"))).ToArray();
+        return form;
+    }
     private static bool FormFailure(Exception exception) => exception is ApiException or ContractValidationException or
         CosmosException or AuthenticationFailedException or HttpRequestException or TimeoutException;
 

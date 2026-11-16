@@ -21,11 +21,34 @@
         <label asp-for="SourceRepository">Source repository (owner/name)</label><input asp-for="SourceRepository" required />
         <label asp-for="BaseBranch">Base branch</label><input asp-for="BaseBranch" required />
         <label asp-for="WorkloadPath">Workload folder in the repository</label><input asp-for="WorkloadPath" required />
-        <label asp-for="SourceConnection">Source connection reference</label><input asp-for="SourceConnection" required />
+        <label asp-for="SourceConnection">Source connection</label>
+        <select asp-for="SourceConnection" required>
+            <option value="">Select a repository connection</option>
+            @foreach (var connection in Model.Connections)
+            {
+                <option value="@connection.Id">@connection.Name</option>
+            }
+            @if (!string.IsNullOrEmpty(Model.SourceConnection) && !Model.Connections.Any(item => item.Id == Model.SourceConnection))
+            {
+                <option value="@Model.SourceConnection">@Model.SourceConnection (existing reference)</option>
+            }
+        </select>
+        <p><a href="/repository-connections">Connect a GitHub repository</a> before selecting a managed connection.</p>
         <h2>Task selection</h2>
         <p>Task provider: GitHub Issues. Task and source repositories are independently configured.</p>
         <label asp-for="TaskRepository">Issue repository (owner/name)</label><input asp-for="TaskRepository" required />
-        <label asp-for="TaskConnection">Task connection reference</label><input asp-for="TaskConnection" required />
+        <label asp-for="TaskConnection">Task connection</label>
+        <select asp-for="TaskConnection" required>
+            <option value="">Select a repository connection</option>
+            @foreach (var connection in Model.Connections)
+            {
+                <option value="@connection.Id">@connection.Name</option>
+            }
+            @if (!string.IsNullOrEmpty(Model.TaskConnection) && !Model.Connections.Any(item => item.Id == Model.TaskConnection))
+            {
+                <option value="@Model.TaskConnection">@Model.TaskConnection (existing reference)</option>
+            }
+        </select>
         <label asp-for="RequiredLabels">Required approval/selection labels (comma-separated)</label><input asp-for="RequiredLabels" required />
         <h2>Approved execution limits</h2>
         <p>These are upper bounds, not permission to bypass local policy. Task execution is not implemented yet.</p>

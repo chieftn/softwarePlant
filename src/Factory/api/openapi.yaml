@@ -1462,7 +1462,13 @@ components:
       minLength: 1
       maxLength: 128
       pattern: '^[a-zA-Z0-9_.-]+$'
-      description: Logical service connection identifier, not credentials.
+      description: |
+        Logical service connection identifier, not credentials. Managed
+        github-{32 lowercase hex} references are created through the browser's
+        repository-connections onboarding, must belong to the line owner and
+        must be connected with this repository selected. Legacy service-configured
+        references remain supported. Disabling a managed connection denies new
+        workload/mission authority; existing external tokens can outlive that change.
     ProductionLinePolicy:
       type: object
       additionalProperties: false

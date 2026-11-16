@@ -8,7 +8,8 @@ namespace Factory.Plant.Service;
 
 public sealed record PlantResult(PlantView Plant, string Revision);
 
-public sealed partial class PlantOperations(IRecordStore store, Pagination pagination, TimeProvider clock, ApiSettings settings)
+public sealed partial class PlantOperations(IRecordStore store, Pagination pagination, TimeProvider clock, ApiSettings settings,
+    ManagedGitHubConnections connections)
 {
     private const int Attempts = 3;
 
