@@ -37,7 +37,7 @@ public sealed class WorkerPlantPipe(Action<WorkerPipeMessage> emit) : IWorkerPla
         var completion = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         pending.TryAdd(id, completion);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        timeout.CancelAfter(TimeSpan.FromSeconds(operation == "model-credential" ? 65 : 30));
         try
         {
             if (Volatile.Read(ref disconnected) != 0)
@@ -56,6 +56,8 @@ public sealed class WorkerPlantPipe(Action<WorkerPipeMessage> emit) : IWorkerPla
         _ = await Request<JsonElement>("authorize", new { missionId = mission.Id }, cancellationToken);
     public Task<RepositoryAccessCredential> CredentialAsync(bool write, CancellationToken cancellationToken) =>
         Request<RepositoryAccessCredential>("credential", new { purpose = write ? "publish" : "read" }, cancellationToken);
+    public Task<ModelAccessCredential> ModelCredentialAsync(DevelopmentMission mission, CancellationToken cancellationToken) =>
+        Request<ModelAccessCredential>("model-credential", new MissionModelCredentialRequest(mission.Id, mission.Digest), cancellationToken);
     public Task<PublishedDevelopmentPullRequest> PublishAsync(string candidate, CancellationToken cancellationToken) =>
         Request<PublishedDevelopmentPullRequest>("publish", new { candidateCommit = candidate }, cancellationToken);
     public async Task<PublishedDevelopmentPullRequest?> PublishedAsync(string candidate, CancellationToken cancellationToken)

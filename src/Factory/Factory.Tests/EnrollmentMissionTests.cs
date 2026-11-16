@@ -128,6 +128,40 @@ public sealed class EnrollmentMissionTests
     }
 
     [Fact]
+    public async Task ModelCredentialsRequireExactExecutingMissionAndRemainFencedAfterRevocation()
+    {
+        using var app = new MissionApplication();
+        var (enrollment, configuration) = await Assigned(app);
+        using var machine = app.Daemon();
+        using var owner = app.Human();
+        var path = $"/v1/enrollments/{enrollment.Id}/mission";
+        var delivery = await Claim(machine, path, Request(configuration));
+        var credentialRequest = new MissionModelCredentialRequest(delivery.Mission.Id, delivery.Mission.Digest);
+        using var premature = await machine.PostAsJsonAsync(path + "/model-credential", credentialRequest);
+        Assert.Equal(HttpStatusCode.Conflict, premature.StatusCode);
+        Assert.Equal(0, app.Models.Grants);
+        using var progress = await SendAsync(machine, HttpMethod.Put, path + "/progress",
+            new DevelopmentMissionProgress(delivery.Mission.Id, delivery.Mission.Digest, "executing", 1, 1, null, null, false, "Executing."), Key());
+        progress.EnsureSuccessStatusCode();
+        using var wrong = await machine.PostAsJsonAsync(path + "/model-credential", credentialRequest with { MissionId = Key() });
+        Assert.Equal(HttpStatusCode.Conflict, wrong.StatusCode);
+        using var granted = await machine.PostAsJsonAsync(path + "/model-credential", credentialRequest);
+        granted.EnsureSuccessStatusCode();
+        Assert.Equal(1, app.Models.Grants);
+        Assert.Equal(configuration.ProductionLine!.Owner, app.Models.LastOwner);
+        Assert.Equal("no-store", granted.Headers.CacheControl!.ToString());
+        using var humanDenied = await owner.PostAsJsonAsync(path + "/model-credential", credentialRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, humanDenied.StatusCode);
+        app.Models.AfterAcquire = () => app.Models.Enabled = false;
+        using var disabledDuringAcquire = await machine.PostAsJsonAsync(path + "/model-credential", credentialRequest);
+        Assert.Equal(HttpStatusCode.Conflict, disabledDuringAcquire.StatusCode);
+        var grants = app.Models.Grants;
+        using var disabled = await machine.PostAsJsonAsync(path + "/model-credential", credentialRequest);
+        Assert.Equal(HttpStatusCode.Conflict, disabled.StatusCode);
+        Assert.Equal(grants, app.Models.Grants);
+    }
+
+    [Fact]
     public async Task DisablingManagedSourceConnectionFencesAnActiveMissionEvenWithSeparateTaskConnection()
     {
         using var app = new MissionApplication();
@@ -222,6 +256,7 @@ public sealed class EnrollmentMissionTests
     private sealed class MissionApplication : ApiTestApplication
     {
         public FakeRepository Repository { get; } = new();
+        public FakeModels Models { get; } = new();
         public DevelopmentMissionSettings Development { get; } = new() { Enabled = true, Reviewers = ["reviewer"] };
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -234,7 +269,27 @@ public sealed class EnrollmentMissionTests
                 services.RemoveAll<IGitHubDevelopmentRepository>();
                 services.AddSingleton<IGitHubRepositoryReader>(Repository);
                 services.AddSingleton<IGitHubDevelopmentRepository>(Repository);
+                services.RemoveAll<IMissionModelAccess>();
+                services.AddSingleton<IMissionModelAccess>(Models);
             });
+        }
+
+    }
+
+    private sealed class FakeModels : IMissionModelAccess
+    {
+        public bool Enabled { get; set; } = true;
+        public int Grants { get; private set; }
+        public EntraPrincipal? LastOwner { get; private set; }
+        public Action? AfterAcquire { get; set; }
+        public Task RequireAsync(EntraPrincipal owner, CancellationToken cancellationToken) => Enabled ? Task.CompletedTask
+            : throw new ApiException(409, "copilot_reauthorization_required", "Fixture authorization disabled.");
+        public Task<ModelAccessCredential> AcquireAsync(EntraPrincipal owner, string model, CancellationToken cancellationToken)
+        {
+            Grants++;
+            LastOwner = owner;
+            AfterAcquire?.Invoke();
+            return Task.FromResult(new ModelAccessCredential("github-copilot", model, "ghu_fixture-model", DateTimeOffset.UtcNow.AddHours(8)));
         }
     }
 

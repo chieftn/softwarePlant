@@ -154,3 +154,55 @@ Release evidence is under
 `src\Factory\artifacts\service\github-onboarding-20261116-001`. This release includes
 uncommitted onboarding changes over `dd875b593b3f3bda077aa5b36740fbcbc41fc21f`;
 `package-evidence.json` records source hashes and all 387 verified archive entries.
+
+## Copilot Subscription Authentication
+
+The user chose an existing Copilot subscription for the first model-authentication
+path, with an extension point for Entra later. Local changes add **Copilot access**:
+one owner-scoped GitHub authorization, used by that owner's production lines and
+their currently assigned machines. Its separate GitHub App requests no repository
+permissions and leaves the connected `productionOutput1` repository app intact.
+App registration, user-token exchange and refresh use the existing website vault;
+no manual token/App Service setting or per-machine GitHub login is required.
+
+Workers now request renewable access tokens over their authorized mission pipe,
+not `FACTORY_WORKBENCH_COPILOT_TOKEN`. The service checks the exact actively
+executing mission and current authority before/after issuing a credential.
+Refresh tokens and OAuth client secrets stay in Key Vault. The SDK's
+session-scoped provider handles initial/refresh acquisition without ambient
+desktop-login fallback. Concurrent refresh has one durable owner, and saved
+one-use results can be recovered without replaying exchanges.
+
+Usage remains attributed to the authorized GitHub user's subscription and limits.
+OAuth authorization alone is not model entitlement verification; a real SDK
+session must confirm access. `IMissionModelAccess`/provider-tagged credentials
+leave a small Entra extension point, but only GitHub Copilot is implemented.
+The host/Linux worker changes are local and not installed. The user separately
+approved deploying the service-side sign-in flow; deployment
+`98c21c77-d7e7-4d2f-b47c-022ba4846079` is active and runtime-successful at the
+production URL above. It supersedes the repository-onboarding service package.
+All 24 settings, authentication, identities and hosting/network fingerprints
+match preflight; the existing vault grant was reused with no new permissions.
+Health/homepage, the new navigation, protected Copilot/browser pages, Entra
+code/PKCE and bearer-only model-credential routes passed anonymous live checks.
+Signed-in Copilot authorization and real SDK entitlement/renewal remain
+unverified. Agent execution remains off and no live model call was made.
+Local validation passed 111 affected OAuth, refresh/recovery, mission, SDK-boundary,
+repository, browser and API-contract cases. Scoped whitespace verification and
+`git diff --check` passed. These checks do not replace authenticated GitHub
+authorization or a real SDK entitlement/renewal acceptance run.
+Release evidence is under `src\Factory\artifacts\service\copilot-auth-20261116-001`.
+The package contains uncommitted authentication changes over
+`3d233f3743253f4ee6cb6932f970ca807ab65105`; all 387 archive entries and 76
+service/contracts source hashes were verified. The immediately preceding
+repository-onboarding ZIP is retained for rollback.
+
+The first live Copilot setup exposed a browser-flow bug: reopening a pending
+setup generated a new operation ID and incorrectly required an explicit restart.
+The page now offers **Continue setup** with the existing operation ID; restart
+is a separate advanced form and expired attempts still require confirmation.
+Deployment `913b95d4-63a9-4f51-a650-8ba25d4ea8f6` supersedes the first Copilot
+service rollout. Eight focused browser/authentication cases and anonymous live
+checks passed, with all production configuration preserved. Evidence is under
+`src\Factory\artifacts\service\copilot-auth-resume-20261116-001`. No user setup
+record, GitHub App or credential was changed by the rollout itself.

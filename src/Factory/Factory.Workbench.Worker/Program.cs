@@ -101,7 +101,8 @@ internal static class WorkerProgram
                 }
             });
             var repository = new GitMissionRepository(request.Mission, run, request.GitAuthorName, request.GitAuthorEmail, plant, new());
-            var agent = new CopilotMissionAgent(repository.Checkout, Path.Combine(run, "sessions"), request.Model, request.CopilotToken, request.Enabled);
+            var agent = new CopilotMissionAgent(repository.Checkout, Path.Combine(run, "sessions"), request.Model,
+                cancellationToken => plant.ModelCredentialAsync(request.Mission, cancellationToken), request.Enabled);
             var runner = new DevelopmentMissionRunner(repository, agent, async (current, cancellationToken) =>
             {
                 LocalState.Write(statePath, current, 512 * 1024);

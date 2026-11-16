@@ -22,6 +22,7 @@ namespace Factory.Plant.Service.Storage;
 [JsonDerivedType(typeof(DevelopmentMissionRecord), "developmentMission")]
 [JsonDerivedType(typeof(DevelopmentIssueClaimRecord), "developmentIssueClaim")]
 [JsonDerivedType(typeof(GitHubConnectionRecord), "githubConnection")]
+[JsonDerivedType(typeof(CopilotAccessRecord), "copilotAccess")]
 public abstract record StoreRecord
 {
     public required string Id { get; init; }
@@ -32,6 +33,22 @@ public abstract record StoreRecord
 public abstract record PlantScopedRecord : StoreRecord
 {
     public required string PlantId { get; init; }
+}
+
+public sealed record CopilotAccessRecord : StoreRecord
+{
+    public required EntraPrincipal Principal { get; init; }
+    public required string State { get; init; }
+    public required string Attempt { get; init; }
+    public required DateTimeOffset UpdatedAt { get; init; }
+    public long AppId { get; init; }
+    public string Slug { get; init; } = "";
+    public string AppRegistrationId { get; init; } = "";
+    public string CredentialId { get; init; } = "";
+    public long GitHubUserId { get; init; }
+    public string GitHubLogin { get; init; } = "";
+    public DateTimeOffset? AccessExpiresAt { get; init; }
+    public DateTimeOffset? RefreshExpiresAt { get; init; }
 }
 
 public sealed record GitHubConnectionRecord : StoreRecord

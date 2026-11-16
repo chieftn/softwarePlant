@@ -1,0 +1,12 @@
+@model GitHubManifestPage
+@{
+    ViewData["Title"] = "Approve GitHub Copilot authorization app";
+}
+<h1>Approve GitHub Copilot authorization app</h1>
+<p>Create this app on GitHub, then return to connect your GitHub Copilot subscription for model access.
+    It requests no repository permissions. Factory stores its OAuth registration in Key Vault automatically.</p>
+<form action="@Model.Action" method="post" asp-antiforgery="false">
+    <input type="hidden" name="manifest" value="@Model.Manifest" />
+    <button class="button" type="submit">Create authorization app on GitHub</button>
+</form>
+<p><a href="/copilot-access">Return to Model access</a></p>

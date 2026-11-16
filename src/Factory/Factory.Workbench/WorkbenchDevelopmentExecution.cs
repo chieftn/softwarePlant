@@ -63,12 +63,6 @@ public sealed class WorkbenchDevelopmentExecution(PlantHttp plant, WorkbenchBind
             Reason = "Resolved project verification commands are required before execution.";
             return;
         }
-        var token = Environment.GetEnvironmentVariable("FACTORY_WORKBENCH_COPILOT_TOKEN");
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            Reason = "Service-owned Copilot model credential is unconfigured; no logged-in-user fallback is permitted.";
-            return;
-        }
         var endpoint = $"v1/enrollments/{binding.EnrollmentId}/mission";
         try
         {
@@ -104,14 +98,15 @@ public sealed class WorkbenchDevelopmentExecution(PlantHttp plant, WorkbenchBind
             var snapshotPath = Path.Combine(LocalState.RuntimeDirectory(root), "development-mission.json");
             var resume = File.Exists(snapshotPath) && LocalState.Read<DevelopmentMissionDelivery>(snapshotPath).Mission.Id == delivery.Mission.Id;
             LocalState.Write(snapshotPath, delivery);
-            worker = await WslMissionWorker.StartAsync(plant, binding, configuration, root, delivery, token, resume, cancellationToken);
+            worker = await WslMissionWorker.StartAsync(plant, binding, configuration, root, delivery, resume, cancellationToken);
             State = "busy";
             Reason = "Owned frozen mission running through the Linux MAF/Copilot worker.";
         }
         catch (PlantConnectionException error) when (error.Code is "development_execution_disabled" or
             "development_policy_unconfigured" or "development_not_permitted" or "issue_not_eligible" or
             "repository_connection_unconfigured" or "repository_write_disabled" or "mission_owned" or
-            "issue_owned" or "workload_changed" or "mission_revoked" or "issue_changed")
+            "issue_owned" or "workload_changed" or "mission_revoked" or "issue_changed" or
+            "copilot_reauthorization_required" or "copilot_refresh_pending" or "model_access_not_authorized")
         {
             if (error.Code == "workload_changed")
             {

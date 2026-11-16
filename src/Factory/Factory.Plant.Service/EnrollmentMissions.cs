@@ -38,6 +38,7 @@ public sealed partial class EnrollmentOperations
         if (!definition.Policy.AllowShellExecution || !definition.Policy.AllowPublication)
             throw new ApiException(403, "development_not_permitted", "The assigned line does not permit verified PR execution.");
         await plants.RequireRepositoryAuthorityAsync(configuration.ProductionLine!, cancellationToken, publication: true);
+        await models.RequireAsync(configuration.ProductionLine!.Owner, cancellationToken);
         var scope = Records.EnrollmentScope(id);
         var slot = await store.ReadAsync(scope, "development-mission", cancellationToken);
         var previous = slot is null ? null : Records.Require<DevelopmentMissionRecord>(slot.Record);
@@ -155,7 +156,31 @@ public sealed partial class EnrollmentOperations
             mission.Progress.State is "reserving" or "rejected")
             throw new ApiException(409, "mission_revoked", "Current membership, line binding or repository authority no longer permits this frozen mission.");
         await plants.RequireRepositoryAuthorityAsync(configuration.ProductionLine!, cancellationToken, publication: true);
+        await models.RequireAsync(configuration.ProductionLine!.Owner, cancellationToken);
         return mission;
+    }
+
+    public async Task<ModelAccessCredential> MissionModelCredentialAsync(string id, ApiCaller caller,
+        MissionModelCredentialRequest request, DevelopmentMissionSettings development,
+        IGitHubDevelopmentRepository repositories, CancellationToken cancellationToken)
+    {
+        await AuthorizeMissionAsync(id, caller, development, repositories, cancellationToken);
+        var owned = await RequireMissionAsync(id, caller, development, cancellationToken);
+        RequireRequestedMission(owned, request);
+        var credential = await models.AcquireAsync(owned.Mission.Workload.Configuration.ProductionLine!.Owner,
+            owned.Mission.Model, cancellationToken);
+        await AuthorizeMissionAsync(id, caller, development, repositories, cancellationToken);
+        RequireRequestedMission(await RequireMissionAsync(id, caller, development, cancellationToken), request);
+        credential.Validate(owned.Mission.Model, clock.GetUtcNow());
+        return credential;
+    }
+
+    private static void RequireRequestedMission(DevelopmentMissionRecord owned, MissionModelCredentialRequest request)
+    {
+        if (owned.Mission.Id != request.MissionId || owned.Mission.Digest != request.MissionDigest ||
+            owned.Progress.State != "executing")
+            throw new ApiException(409, "model_access_not_authorized",
+                "Model credentials require the exact owned mission and recorded active execution.");
     }
 
     public async Task AuthorizeMissionAsync(string id, ApiCaller caller, DevelopmentMissionSettings development,

@@ -49,6 +49,14 @@ public static partial class PlantEndpoints
                 (await BodyAsync<MissionCredentialRequest>(context, cancellationToken)).Purpose,
                 development, repositories, cancellationToken), Json);
         });
+        missions.MapPost("/model-credential", async (string operationId, HttpContext context, EnrollmentOperations operations,
+            DevelopmentMissionSettings development, IGitHubDevelopmentRepository repositories, CancellationToken cancellationToken) =>
+        {
+            NoQuery(context);
+            return Results.Json(await operations.MissionModelCredentialAsync(PlantId(operationId), ApiCaller.Read(context.User),
+                await BodyAsync<MissionModelCredentialRequest>(context, cancellationToken), development, repositories,
+                cancellationToken), Json);
+        });
         missions.MapPost("/publish", async (string operationId, HttpContext context, EnrollmentOperations operations,
             DevelopmentMissionSettings development, IGitHubDevelopmentRepository repositories, CancellationToken cancellationToken) =>
         {

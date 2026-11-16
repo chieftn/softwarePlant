@@ -8,7 +8,8 @@ using Microsoft.Agents.AI;
 
 namespace Factory.Workbench.Worker;
 
-public sealed class CopilotMissionAgent(string workspace, string sessionRoot, string model, string modelToken,
+public sealed class CopilotMissionAgent(string workspace, string sessionRoot, string model,
+    Func<CancellationToken, Task<ModelAccessCredential>> acquireCredential,
     bool executionEnabled) : IDevelopmentMissionAgent
 {
     public async Task ImplementAsync(DevelopmentMission mission, CandidateAlignment? previousAlignment,
@@ -55,7 +56,7 @@ public sealed class CopilotMissionAgent(string workspace, string sessionRoot, st
 
     private async Task<string> RunAsync(DevelopmentMission mission, string role, string context, CancellationToken cancellationToken)
     {
-        if (!executionEnabled || string.IsNullOrWhiteSpace(modelToken) || string.IsNullOrWhiteSpace(model))
+        if (!executionEnabled || string.IsNullOrWhiteSpace(model))
             throw new InvalidOperationException("SDK execution requires explicit enablement, model and service-owned model credentials.");
         mission.Validate();
         var workload = mission.Workload.Validate();
@@ -66,7 +67,6 @@ public sealed class CopilotMissionAgent(string workspace, string sessionRoot, st
         {
             WorkingDirectory = workspace,
             BaseDirectory = home,
-            GitHubToken = modelToken,
             UseLoggedInUser = false,
             Environment = new Dictionary<string, string>
             {
@@ -78,6 +78,10 @@ public sealed class CopilotMissionAgent(string workspace, string sessionRoot, st
         var configuration = new SessionConfig
         {
             Model = model,
+#pragma warning disable GHCP001
+            GitHubTokenProvider = args => CopilotModelAuthentication.TokenAsync(args.Host, model, acquireCredential,
+                TimeProvider.System, cancellationToken),
+#pragma warning restore GHCP001
             WorkingDirectory = workspace,
             EnableFileHooks = false,
             ExcludedTools = ["ask_user"],

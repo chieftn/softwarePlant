@@ -1128,7 +1128,7 @@ paths:
     post:
       operationId: authorizeDevelopmentMission
       tags: [ProductionLines]
-      summary: Recheck current ownership, policy, repository authority and frozen issue.
+      summary: Recheck current ownership, policy, repository/model authority and frozen issue.
       security:
         - WorkbenchBearer: []
       responses:
@@ -1162,6 +1162,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RepositoryAccessCredential'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission/model-credential:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: getDevelopmentModelCredential
+      tags: [ProductionLines]
+      summary: Obtain the production-line owner's renewable Copilot user credential for active SDK execution.
+      description: |
+        Requires the exact owned mission ID/digest, recorded executing state, current
+        membership/binding, enabled execution, repository authority, frozen issue and
+        the line owner's connected model authorization. Rechecks authority after
+        credential acquisition. The model comes from the frozen mission, not this request.
+        Refresh tokens and OAuth client secrets never leave the service vault.
+        The returned GitHub user token is not cryptographically restricted to this
+        mission/model; Factory controls issuance and the SDK worker must keep it in memory.
+        Usage is attributed to the authorized GitHub user's Copilot subscription.
+        Never log, persist or place the response in command arguments.
+      security:
+        - WorkbenchBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MissionModelCredentialRequest'
+      responses:
+        '200':
+          description: Sensitive child-only model credential; Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelAccessCredential'
         default:
           $ref: '#/components/responses/UnexpectedFailure'
   /v1/enrollments/{operationId}/mission/publish:
@@ -1786,6 +1820,36 @@ components:
         purpose:
           type: string
           enum: [read, publish]
+    MissionModelCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [missionId, missionDigest]
+      properties:
+        missionId:
+          type: string
+          format: uuid
+        missionDigest:
+          $ref: '#/components/schemas/SnapshotDigest'
+    ModelAccessCredential:
+      type: object
+      additionalProperties: false
+      required: [provider, model, accessToken, expiresAt]
+      properties:
+        provider:
+          type: string
+          enum: [github-copilot]
+        model:
+          type: string
+          minLength: 1
+          maxLength: 128
+        accessToken:
+          type: string
+          minLength: 1
+          description: Sensitive GitHub App user token, never an installation or refresh token.
+        expiresAt:
+          type: string
+          format: date-time
+          description: More than 65 minutes must remain at SDK delivery.
     RepositoryAccessCredential:
       type: object
       additionalProperties: false

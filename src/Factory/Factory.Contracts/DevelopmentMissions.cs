@@ -153,14 +153,14 @@ public sealed record DevelopmentMissionProgress
     }
 }
 
-public sealed record WorkerMissionRequest(DevelopmentMission Mission, bool Enabled, string Model, string CopilotToken,
+public sealed record WorkerMissionRequest(DevelopmentMission Mission, bool Enabled, string Model, string ModelProvider,
     bool AllowShellExecution, bool AllowPublication, string[] AllowedRepositories, string GitAuthorName, string GitAuthorEmail,
     string[] Reviewers)
 {
     public void Validate()
     {
         Mission.Validate();
-        if (!Enabled || string.IsNullOrWhiteSpace(CopilotToken) || !AllowShellExecution || !AllowPublication ||
+        if (!Enabled || ModelProvider != "github-copilot" || !AllowShellExecution || !AllowPublication ||
             AllowedRepositories is null || !AllowedRepositories.Contains(
                 Mission.Workload.Configuration.ProductionLine!.Definition.Source.Repository, StringComparer.OrdinalIgnoreCase) ||
             !AllowedRepositories.Contains(Mission.Workload.Configuration.ProductionLine.Definition.Tasks.Repository, StringComparer.OrdinalIgnoreCase) ||

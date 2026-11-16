@@ -12,6 +12,7 @@ public static class WebsiteErrors
     public static bool IsPage(PathString path) => path == "/" || path.StartsWithSegments("/plants") ||
         path.StartsWithSegments("/production-lines") ||
         path.StartsWithSegments("/repository-connections") ||
+        path.StartsWithSegments("/copilot-access") ||
         path.StartsWithSegments("/account") || path == "/signin-oidc" || path == "/signout-callback-oidc";
 
     public static Task WriteAsync(HttpContext context, int status, string detail, int? retryAfter = null)

@@ -21,9 +21,9 @@ public interface IGitHubConnectionSecrets
 
 public sealed class KeyVaultGitHubConnectionSecrets(WebsiteSettings website, TokenCredential credential) : IGitHubConnectionSecrets
 {
-    public void RequireConfigured() => _ = Vault();
+    public void RequireConfigured() => _ = Vault(website);
 
-    private Uri Vault()
+    internal static Uri Vault(WebsiteSettings website)
     {
         if (!Uri.TryCreate(website.DataProtectionKeyId, UriKind.Absolute, out var key) ||
             key.Scheme != "https" || !key.Host.EndsWith(".vault.azure.net", StringComparison.OrdinalIgnoreCase) ||
@@ -42,7 +42,7 @@ public sealed class KeyVaultGitHubConnectionSecrets(WebsiteSettings website, Tok
     {
         try
         {
-            var client = new SecretClient(Vault(), credential);
+            var client = new SecretClient(Vault(website), credential);
             _ = SecretName(reference);
             const string checkName = "factory-github-onboarding-access-check";
             await client.SetSecretAsync(new KeyVaultSecret(checkName, "pending-github-registration"), cancellationToken);
@@ -61,7 +61,7 @@ public sealed class KeyVaultGitHubConnectionSecrets(WebsiteSettings website, Tok
     {
         try
         {
-            await new SecretClient(Vault(), credential).SetSecretAsync(new KeyVaultSecret(SecretName(reference),
+            await new SecretClient(Vault(website), credential).SetSecretAsync(new KeyVaultSecret(SecretName(reference),
                 JsonSerializer.Serialize(registration)), cancellationToken);
         }
         catch (RequestFailedException)
@@ -75,7 +75,7 @@ public sealed class KeyVaultGitHubConnectionSecrets(WebsiteSettings website, Tok
     {
         try
         {
-            var secret = await new SecretClient(Vault(), credential).GetSecretAsync(SecretName(reference),
+            var secret = await new SecretClient(Vault(website), credential).GetSecretAsync(SecretName(reference),
                 cancellationToken: cancellationToken);
             try
             {

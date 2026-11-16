@@ -60,13 +60,13 @@ public sealed class WslMissionWorker : IDisposable
     }
 
     public static async Task<WslMissionWorker> StartAsync(PlantHttp plant, WorkbenchBinding binding,
-        WorkbenchConfiguration configuration, string root, DevelopmentMissionDelivery delivery, string modelToken,
+        WorkbenchConfiguration configuration, string root, DevelopmentMissionDelivery delivery,
         bool resume, CancellationToken cancellationToken)
     {
         configuration.Validate();
         if (configuration.Development?.Enabled != true)
             throw new InvalidDataException("Local development execution is disabled.");
-        var request = new WorkerMissionRequest(delivery.Mission, true, delivery.Mission.Model, modelToken,
+        var request = new WorkerMissionRequest(delivery.Mission, true, delivery.Mission.Model, "github-copilot",
             configuration.AllowShellExecution, configuration.AllowPublication, configuration.AllowedRepositories,
             configuration.Development.GitAuthorName, configuration.Development.GitAuthorEmail, delivery.Reviewers);
         request.Validate();
@@ -192,6 +192,13 @@ public sealed class WslMissionWorker : IDisposable
                 case "credential":
                     payload = await plant.SendAsync<JsonElement>(HttpMethod.Post, Endpoint + "/credential",
                         message.Payload.Deserialize<MissionCredentialRequest>(RepositoryWorkload.Json), null, requests.Token);
+                    break;
+                case "model-credential":
+                    var modelRequest = message.Payload.Deserialize<MissionModelCredentialRequest>(RepositoryWorkload.Json);
+                    if (modelRequest?.MissionId != Mission.Id || modelRequest.MissionDigest != Mission.Digest)
+                        throw new InvalidDataException("Worker requested model credentials outside its owned mission.");
+                    payload = await plant.SendAsync<JsonElement>(HttpMethod.Post, Endpoint + "/model-credential",
+                        modelRequest, null, requests.Token);
                     break;
                 case "publish":
                 case "published":

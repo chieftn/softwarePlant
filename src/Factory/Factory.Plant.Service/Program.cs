@@ -43,6 +43,10 @@ public partial class Program
         builder.Services.AddSingleton<IGitHubConnectionSecrets, KeyVaultGitHubConnectionSecrets>();
         builder.Services.AddSingleton<IGitHubOnboardingClient, GitHubOnboardingClient>();
         builder.Services.AddSingleton<ManagedGitHubConnections>();
+        builder.Services.AddSingleton<ICopilotSecrets, KeyVaultCopilotSecrets>();
+        builder.Services.AddSingleton<IGitHubCopilotOAuth, GitHubCopilotOAuth>();
+        builder.Services.AddSingleton<ManagedCopilotAccess>();
+        builder.Services.AddSingleton<IMissionModelAccess>(services => services.GetRequiredService<ManagedCopilotAccess>());
         builder.Services.AddSingleton<GitHubRepositoryReader>();
         builder.Services.AddSingleton<IGitHubRepositoryReader>(services => services.GetRequiredService<GitHubRepositoryReader>());
         builder.Services.AddSingleton<IGitHubDevelopmentRepository>(services => services.GetRequiredService<GitHubRepositoryReader>());
@@ -141,7 +145,8 @@ public partial class Program
                     context.Response.Headers.CacheControl = "no-store";
                     context.Response.Headers["Content-Security-Policy"] =
                         "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https://login.microsoftonline.com" +
-                        (context.Request.Path.StartsWithSegments("/repository-connections") ? " https://github.com" : "");
+                        (context.Request.Path.StartsWithSegments("/repository-connections") ||
+                         context.Request.Path.StartsWithSegments("/copilot-access") ? " https://github.com" : "");
                     context.Response.Headers["Referrer-Policy"] = "no-referrer";
                     context.Response.Headers.XContentTypeOptions = "nosniff";
                     return Task.CompletedTask;

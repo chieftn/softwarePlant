@@ -108,6 +108,87 @@ installation remain unverified. The ignored release folder
 preflight/postflight snapshots, ARM preview/deployment/permission evidence and
 HTTP acceptance. No client rollout or model activation was performed.
 
+### Copilot subscription authorization
+
+The service provides **Copilot access** (`/copilot-access`). Create its
+authorization app, then select **Authorize Copilot subscription** and choose the
+GitHub account with the subscription. This is a separate private GitHub App with
+no repository permissions; it does not replace or reinstall repository apps and
+does not need repository installation. Both app registration and OAuth user
+credentials go directly to the existing website vault. The previously approved
+vault get/set role supports this path; no additional Azure setting or grant is
+introduced.
+
+One authorization belongs to each Factory user and supplies model access for
+production lines that user owns. Machines inherit that authority through their
+current plant/line assignment; they do not sign in individually. All usage still
+belongs to the authorized GitHub account and shares its subscription limits and
+organization policies. Successful OAuth proves account authorization, **not**
+Copilot entitlement or availability of a selected model. The real SDK session
+checks those, and must fail rather than use another identity.
+
+The flow uses protected, owner-bound, expiring state, PKCE S256 and
+`offline_access`. User tokens are refreshed before fewer than 70 minutes remain.
+Refresh is conditionally owned in Cosmos so concurrent machines cannot consume
+the same rotating refresh token. App and token results use attempt-specific
+vault secrets; Cosmos contains only metadata and selected credential IDs.
+An interrupted one-use exchange/refresh is never replayed automatically:
+**Recover saved authorization** can select a result already saved in the vault.
+If no user token was saved, explicitly authorize again. If app creation was
+interrupted without a saved registration, reconcile the app on GitHub before
+explicitly restarting app creation. Old vault versions/attempt secrets are
+retained for operator recovery, not automatically deleted.
+
+Workers request only access tokens through the enrollment's bearer-protected
+`mission/model-credential` endpoint and owned pipe. It checks the exact executing
+mission, frozen model, current membership, binding, repository/issue authority
+and owner's model authorization, both before and after acquisition. Refresh
+tokens/client secrets stay in the service. Access tokens stay in worker memory;
+no token is included in the startup packet, journals or command arguments.
+Ordinary plant HTTP requests retain a 30-second deadline; model-credential
+requests allow 60 seconds for bounded refresh, with a 65-second pipe deadline.
+
+The SDK uses its session-scoped GitHub token provider with
+`UseLoggedInUser=false`, including renewal callbacks; the old
+`FACTORY_WORKBENCH_COPILOT_TOKEN` input is no longer used. Host and Linux worker
+must be upgraded together because their internal startup contract changed.
+The pinned SDK marks the callback experimental (`GHCP001`); the opt-in is
+restricted to the adapter and its tests.
+
+**Disable Copilot access** denies fresh credentials and ongoing mission
+authorization checks. It does not revoke already-issued GitHub tokens; revoke
+the authorized app on GitHub when immediate external revocation is needed.
+Tokens are user/app credentials, not GitHub-enforced per-mission/per-model grants.
+
+`IMissionModelAccess` and the provider-tagged credential form the extension point
+for future Azure/Entra authentication. Only `github-copilot` is implemented now;
+no Azure model resource, identity, quota or billing configuration is added.
+After explicit approval, service deployment
+`98c21c77-d7e7-4d2f-b47c-022ba4846079` completed November 16, 2026 and supersedes
+the repository-onboarding service deployment above. Existing settings (24),
+authentication, identities and hosting/network fingerprints were unchanged;
+the existing vault grant was reused without new permissions. Anonymous health,
+Copilot navigation, browser sign-in/PKCE and bearer-only model-credential checks
+passed. Release evidence is under `artifacts\service\copilot-auth-20261116-001`,
+including source/package hashes, preflight/postflight and HTTP acceptance.
+
+The pending-setup continuation repair is deployed as
+`913b95d4-63a9-4f51-a650-8ba25d4ea8f6`; evidence is under
+`artifacts\service\copilot-auth-resume-20261116-001`. Reopening a pending setup
+now preserves its operation ID and offers **Continue setup**, without requiring
+restart confirmation. Explicit restart is separate and remains required for
+expired attempts. Eight focused browser/auth cases and anonymous live checks
+passed, with production configuration unchanged.
+
+The host/Linux worker changes are implemented but not installed. Signed-in
+Copilot setup and a bounded real SDK entitlement/renewal acceptance run remain
+unperformed. No execution enablement, client installation, GitHub App creation
+on the user's behalf or model call was performed for this increment.
+
+Sources: [SDK GitHub OAuth](https://docs.github.com/en/copilot/how-tos/copilot-sdk/setup/github-oauth),
+[SDK authentication and rotating session tokens](https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/authenticate),
+[GitHub App user tokens/PKCE/offline access](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
+
 ### Private cross-region Cosmos access
 
 [`backend-peering.bicep`](backend-peering.bicep) connects existing, non-overlapping application and Cosmos VNets in the same resource group. Supply `appVnetName` and `cosmosVnetName`. It creates both peering directions with virtual-network access enabled and forwarding/gateway transit disabled. It does not create a web app or database, grant data access, or enable public Cosmos access. Cross-region peering incurs traffic charges.

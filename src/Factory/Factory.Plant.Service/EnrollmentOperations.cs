@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.DataProtection;
 namespace Factory.Plant.Service;
 
 public sealed partial class EnrollmentOperations(IRecordStore store, PlantOperations plants, TimeProvider clock,
-    IDataProtectionProvider protection, ApiSettings api, EnrollmentSettings settings, Pagination pagination)
+    IDataProtectionProvider protection, ApiSettings api, EnrollmentSettings settings, Pagination pagination, IMissionModelAccess models)
 {
     private readonly IDataProtector challengeProtector = protection.CreateProtector(
         "Factory.Workbench.Enrollment.Challenge.v2", api.TenantId, api.ClientId);

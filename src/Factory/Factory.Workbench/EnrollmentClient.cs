@@ -125,6 +125,9 @@ public sealed class PlantHttp(HttpClient http, Func<CancellationToken, Task<stri
     private async Task<HttpResponseMessage> SendCoreAsync(HttpMethod method, string path, object? body, string? operation,
         CancellationToken cancellationToken)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(body is MissionModelCredentialRequest ? 60 : 30));
+        cancellationToken = deadline.Token;
         using var request = new HttpRequestMessage(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await token(cancellationToken));
         if (operation is not null)
@@ -167,7 +170,7 @@ public sealed class PlantHttp(HttpClient http, Func<CancellationToken, Task<stri
     }
 
     public static HttpClient Create(string origin) => new(new HttpClientHandler { AllowAutoRedirect = false })
-    { BaseAddress = new Uri(origin), Timeout = TimeSpan.FromSeconds(30), MaxResponseContentBufferSize = 128 * 1024 };
+    { BaseAddress = new Uri(origin), Timeout = TimeSpan.FromSeconds(70), MaxResponseContentBufferSize = 128 * 1024 };
 }
 
 public sealed class EnrollmentClient(PlantHttp plant)

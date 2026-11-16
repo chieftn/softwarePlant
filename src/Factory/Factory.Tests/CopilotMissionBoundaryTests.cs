@@ -9,6 +9,28 @@ namespace Factory.Tests;
 
 public sealed class CopilotMissionBoundaryTests
 {
+#pragma warning disable GHCP001
+    [Fact]
+    public async Task SdkTokenCallbackObtainsFreshMissionCredentialsWithoutAmbientFallback()
+    {
+        var clock = new TestClock();
+        var calls = 0;
+        Task<ModelAccessCredential> Acquire(CancellationToken cancellationToken) => Task.FromResult(
+            new ModelAccessCredential("github-copilot", "test-model", "ghu_fixture-" + ++calls, clock.Now.AddHours(8)));
+        var first = await CopilotModelAuthentication.TokenAsync("github.com", "test-model", Acquire, clock, CancellationToken.None);
+        var refreshed = await CopilotModelAuthentication.TokenAsync("github.com", "test-model", Acquire, clock, CancellationToken.None);
+        Assert.NotEqual(first.Token!.AccessToken, refreshed.Token!.AccessToken);
+        Assert.Equal(28800, refreshed.Token.ExpiresIn);
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CopilotModelAuthentication.TokenAsync("other.example", "test-model", Acquire, clock, CancellationToken.None));
+        Assert.Equal(2, calls);
+        await Assert.ThrowsAsync<ContractValidationException>(() =>
+            CopilotModelAuthentication.TokenAsync("github.com", "other-model", Acquire, clock, CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() => CopilotModelAuthentication.TokenAsync("github.com", "test-model",
+            _ => throw new IOException("Fixture credentials unavailable."), clock, CancellationToken.None));
+    }
+#pragma warning restore GHCP001
+
     [Fact]
     public void ImplementationAndAlignmentReceiveDifferentContainedFilePermissions()
     {
@@ -47,7 +69,8 @@ public sealed class CopilotMissionBoundaryTests
     public async Task DisabledSdkAdapterCannotStartRuntimeOrCreateSessionState()
     {
         var root = Path.Combine(Path.GetTempPath(), $"factory-disabled-sdk-{Guid.NewGuid():N}");
-        var agent = new CopilotMissionAgent(Path.Combine(root, "repository"), Path.Combine(root, "sessions"), "test-model", "", false);
+        var agent = new CopilotMissionAgent(Path.Combine(root, "repository"), Path.Combine(root, "sessions"), "test-model",
+            _ => throw new InvalidOperationException("Disabled execution must not request model credentials."), false);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             agent.ImplementAsync(DevelopmentMissionTests.Mission(), null, [], CancellationToken.None));
         Assert.False(Directory.Exists(root));
