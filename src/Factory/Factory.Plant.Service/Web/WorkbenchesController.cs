@@ -16,7 +16,13 @@ public sealed class WorkbenchesController(PlantOperations operations, ApiSetting
     }
 
     [HttpGet("/plants/{plantId}/workbenches/{workbenchId}")]
-    public async Task<IActionResult> Detail(string plantId, string workbenchId, CancellationToken cancellationToken) =>
-        View(await operations.GetWorkbenchAsync(PlantEndpoints.PlantId(plantId), PlantEndpoints.WorkbenchId(workbenchId),
-            WebsiteAuthentication.Caller(User, settings), cancellationToken));
+    public async Task<IActionResult> Detail(string plantId, string workbenchId, CancellationToken cancellationToken)
+    {
+        var plant = PlantEndpoints.PlantId(plantId);
+        var workbench = PlantEndpoints.WorkbenchId(workbenchId);
+        var caller = WebsiteAuthentication.Caller(User, settings);
+        return View(new WorkbenchDetailsPage(
+            await operations.GetWorkbenchAsync(plant, workbench, caller, cancellationToken),
+            await operations.GetWorkbenchConfigurationAsync(plant, workbench, caller, cancellationToken)));
+    }
 }

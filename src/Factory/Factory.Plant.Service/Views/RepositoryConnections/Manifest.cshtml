@@ -1,0 +1,12 @@
+@model GitHubManifestPage
+@{
+    ViewData["Title"] = "Approve GitHub App";
+}
+<h1>Approve GitHub App</h1>
+<p>The next page is GitHub. Review the app name and permissions, then approve creation.
+    Factory receives the private key directly and stores it in Key Vault.</p>
+<form action="@Model.Action" method="post" asp-antiforgery="false">
+    <input type="hidden" name="manifest" value="@Model.Manifest" />
+    <button class="button" type="submit">Create app on GitHub</button>
+</form>
+<p><a href="/repository-connections/@Model.Reference">Return to this connection</a></p>

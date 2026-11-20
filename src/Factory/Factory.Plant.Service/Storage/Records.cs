@@ -15,6 +15,14 @@ namespace Factory.Plant.Service.Storage;
 [JsonDerivedType(typeof(AuditRecord), "audit")]
 [JsonDerivedType(typeof(EnrollmentRecord), "enrollment")]
 [JsonDerivedType(typeof(EnrollmentReservationRecord), "enrollmentReservation")]
+[JsonDerivedType(typeof(ProductionLineRecord), "productionLine")]
+[JsonDerivedType(typeof(ProductionLineRevisionRecord), "productionLineRevision")]
+[JsonDerivedType(typeof(ProductionLineBindingRecord), "productionLineBinding")]
+[JsonDerivedType(typeof(ConfigurationObservationRecord), "configurationObservation")]
+[JsonDerivedType(typeof(DevelopmentMissionRecord), "developmentMission")]
+[JsonDerivedType(typeof(DevelopmentIssueClaimRecord), "developmentIssueClaim")]
+[JsonDerivedType(typeof(GitHubConnectionRecord), "githubConnection")]
+[JsonDerivedType(typeof(CopilotAccessRecord), "copilotAccess")]
 public abstract record StoreRecord
 {
     public required string Id { get; init; }
@@ -25,6 +33,51 @@ public abstract record StoreRecord
 public abstract record PlantScopedRecord : StoreRecord
 {
     public required string PlantId { get; init; }
+}
+
+public sealed record CopilotAccessRecord : StoreRecord
+{
+    public required EntraPrincipal Principal { get; init; }
+    public required string State { get; init; }
+    public required string Attempt { get; init; }
+    public required DateTimeOffset UpdatedAt { get; init; }
+    public long AppId { get; init; }
+    public string Slug { get; init; } = "";
+    public string AppRegistrationId { get; init; } = "";
+    public string CredentialId { get; init; } = "";
+    public long GitHubUserId { get; init; }
+    public string GitHubLogin { get; init; } = "";
+    public DateTimeOffset? AccessExpiresAt { get; init; }
+    public DateTimeOffset? RefreshExpiresAt { get; init; }
+}
+
+public sealed record GitHubConnectionRecord : StoreRecord
+{
+    public required EntraPrincipal Principal { get; init; }
+    public required string Name { get; init; }
+    public required string State { get; init; }
+    public required string Organization { get; init; }
+    public required bool AllowPublication { get; init; }
+    public required DateTimeOffset CreatedAt { get; init; }
+    public long AppId { get; init; }
+    public string Slug { get; init; } = "";
+    public string Account { get; init; } = "";
+    public long InstallationId { get; init; }
+    public string[] Repositories { get; init; } = [];
+}
+
+public sealed record DevelopmentMissionRecord : StoreRecord
+{
+    public required DevelopmentMission Mission { get; init; }
+    public required string RequestDigest { get; init; }
+    public required DevelopmentMissionProgress Progress { get; init; }
+    public bool TerminationConfirmed { get; init; }
+}
+
+public sealed record DevelopmentIssueClaimRecord : StoreRecord
+{
+    public required string EnrollmentId { get; init; }
+    public required string MissionId { get; init; }
 }
 
 public sealed record PlantRecord : PlantScopedRecord
@@ -108,6 +161,31 @@ public sealed record OperationRecord : StoreRecord
     public required DateTimeOffset RecordedAt { get; init; }
     public PlantView? Plant { get; init; }
     public string? Revision { get; init; }
+    public ProductionLineView? ProductionLine { get; init; }
+}
+
+public sealed record ProductionLineRecord : StoreRecord
+{
+    public required EntraPrincipal Principal { get; init; }
+    public required ProductionLineView Line { get; init; }
+}
+
+public sealed record ProductionLineRevisionRecord : StoreRecord
+{
+    public required ProductionLineView Line { get; init; }
+}
+
+public sealed record ProductionLineBindingRecord : PlantScopedRecord
+{
+    public required ProductionLineBinding Binding { get; init; }
+}
+
+public sealed record ConfigurationObservationRecord : StoreRecord
+{
+    public required string EnrollmentId { get; init; }
+    public string? PlantId { get; init; }
+    public required WorkbenchConfigurationObservation Observation { get; init; }
+    public required DateTimeOffset RecordedAt { get; init; }
 }
 
 public sealed record AuditRecord : StoreRecord
@@ -143,6 +221,7 @@ public static class Records
     public static string WorkbenchScope(string plantId, string workbenchId) => $"plant:{plantId}:workbench:{workbenchId}";
     public static string EnrollmentScope(string operationId) => $"enrollment:{operationId}";
     public static string InstallationScope(string installationId) => $"installation:{installationId}";
+    public static string ProductionLineScope(string lineId) => $"line:{lineId}";
 
     public static T Require<T>(StoreRecord record) where T : StoreRecord =>
         record is T value && record.SchemaVersion == "1" ? value

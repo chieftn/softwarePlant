@@ -1,0 +1,25 @@
+@model ProductionLinesPage
+@{
+    ViewData["Title"] = "Production lines";
+}
+<div class="page-heading">
+    <div><p class="eyebrow">Configuration</p><h1>Production lines</h1></div>
+    <a class="button" href="/production-lines/create">Define production line</a>
+</div>
+<p>Lines you own. Definitions are stored in Factory; workload instructions are versioned in the source repository.</p>
+<section class="panel">
+    @if (Model.Lines.Items.Count == 0)
+    {
+        <p>No production lines are defined for your account.</p>
+    }
+    @foreach (var line in Model.Lines.Items)
+    {
+        <p><a asp-action="Detail" asp-route-lineId="@line.Id">@line.Definition.Name</a>
+            &mdash; @line.Definition.Source.Repository &mdash; <code>@line.Id</code></p>
+    }
+    @if (Model.Lines.ContinuationToken is { } token)
+    {
+        <a asp-action="Index" asp-route-pageSize="@Context.Request.Query["pageSize"]"
+           asp-route-continuationToken="@token">Next page</a>
+    }
+</section>

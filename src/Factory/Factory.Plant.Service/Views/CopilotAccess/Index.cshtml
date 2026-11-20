@@ -1,0 +1,96 @@
+@model Factory.Plant.Service.Storage.CopilotAccessRecord
+@inject TimeProvider Clock
+@{
+    ViewData["Title"] = "Model access";
+    var canContinue = Model is { State: "pending" } pending && pending.UpdatedAt.AddHours(1) > Clock.GetUtcNow();
+    var connected = Model?.State == "connected";
+    var authorization = Model?.State switch
+    {
+        null => "Not connected",
+        "pending" => "Setup not finished",
+        "exchangingApp" => "Saving provider setup",
+        "needsAuthorization" => "GitHub sign-in required",
+        "authorizing" => "Waiting for GitHub authorization",
+        "exchangingUser" => "Saving GitHub authorization",
+        "connected" => "Connected",
+        "refreshing" => "Refreshing authorization",
+        "disabled" => "Disabled",
+        _ => Model!.State
+    };
+}
+<h1>Model access</h1>
+<p>Connect a model provider so Factory agents can perform production-line work. GitHub Copilot uses your existing subscription.
+    Repository permissions are configured separately in <a href="/repository-connections">Repository connections</a>.</p>
+<p>Usage counts against the authorized account's subscription, limits and organization policies.
+    Connecting does not start agents. Model availability and entitlement are checked by the SDK when a session starts.</p>
+<p>Provider: <strong>GitHub Copilot</strong>.</p>
+<p>Authorization: <strong>@authorization</strong>.</p>
+@if (Model is not null)
+{
+    @if (Model.GitHubLogin.Length > 0)
+    {
+        <p>GitHub account: @Model.GitHubLogin. Access token expires: @Model.AccessExpiresAt?.ToString("u").
+            Refresh authorization expires: @Model.RefreshExpiresAt?.ToString("u").</p>
+    }
+}
+@if (Model is null || Model.AppId == 0)
+{
+    <section class="panel">
+        <h2>Connect GitHub Copilot</h2>
+        <p>This separate GitHub App requests no repository permissions and does not need repository installation.
+            Your existing repository connections are unchanged. Factory stores its OAuth credentials directly in Key Vault.</p>
+        @if (Model is null || canContinue)
+        {
+            <p>Next: continue to the approval page, then select <strong>Create authorization app on GitHub</strong>.</p>
+            <form action="/copilot-access/setup" method="post" asp-antiforgery="true">
+                <input type="hidden" name="operationKey" value="@(canContinue ? Model!.Attempt : Guid.NewGuid().ToString("D"))" />
+                <button class="button" type="submit">@(canContinue ? "Continue setup" : "Connect GitHub Copilot")</button>
+            </form>
+        }
+        @if (Model is not null)
+        {
+            <details>
+                <summary>Restart an interrupted or expired setup</summary>
+                <p>Use Continue setup when it is available. If you already created the app on GitHub, finish its return to Factory
+                    or recover the saved registration below. Restart only after checking GitHub and removing any unused incomplete authorization app.</p>
+                <form action="/copilot-access/setup" method="post" asp-antiforgery="true">
+                    <input type="hidden" name="operationKey" value="@Guid.NewGuid().ToString("D")" />
+                    <label><input type="checkbox" name="restart" value="true" required />
+                        I checked GitHub and removed any unused incomplete authorization app.</label>
+                    <button class="button secondary" type="submit">Restart setup</button>
+                </form>
+            </details>
+        }
+    </section>
+}
+@if (Model is { AppId: > 0 })
+{
+    <p>GitHub authorization app: @Model.Slug.</p>
+    <form action="/copilot-access/authorize" method="post" asp-antiforgery="true">
+        <button class="button" type="submit">@(connected ? "Reconnect GitHub Copilot" : "Connect GitHub Copilot")</button>
+    </form>
+    @if (connected)
+    {
+        <p>Your authorization is connected. Reconnect only to renew authorization or choose a different GitHub account.</p>
+    }
+    else
+    {
+        <p>Select the GitHub account that has your Copilot subscription. No personal access token or manual vault setting is required.</p>
+    }
+}
+@if (Model?.State is "exchangingApp" or "exchangingUser" or "refreshing")
+{
+    <p>An exchange was started. Recover its saved result first; one-use exchanges are never automatically repeated.
+        If no user token was saved, explicitly authorize the subscription again.</p>
+    <form action="/copilot-access/recover" method="post" asp-antiforgery="true">
+        <button class="button" type="submit">Recover saved authorization</button>
+    </form>
+}
+@if (Model is not null && Model.State != "disabled")
+{
+    <form action="/copilot-access/disable" method="post" asp-antiforgery="true">
+        <button class="button secondary" type="submit">Disable model access</button>
+    </form>
+}
+<p>Disabling model access blocks new model credentials and mission authorization. Already-issued GitHub tokens remain valid until expiry
+    or revocation on GitHub. GitHub Copilot is the currently supported provider; Azure/Entra model access is not available yet.</p>

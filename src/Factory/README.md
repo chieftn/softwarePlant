@@ -22,12 +22,12 @@ Bootstrap handoff files contain identifiers/endpoints, not credentials, and defa
 
 | Location | Implemented |
 |---|---|
-| `Factory.Contracts` | Plant, enrollment, machine binding, registration/presence, installation-profile and configuration contracts. |
-| `Factory.Plant.Service` | Entra bearer API, separate browser sign-in, scoped authorization, durable background directory provisioning, Cosmos persistence and Razor inventory. |
+| `Factory.Contracts` | Plant, enrollment, machine binding, registration/presence, installation-profile, production-line definition/binding and configuration-observation contracts. |
+| `Factory.Plant.Service` | Entra bearer API, separate browser sign-in, scoped authorization, durable background directory provisioning, Cosmos persistence, Razor inventory and owned production-line management. |
 | `Factory.Workbench` | Protected configuration/binding, resumable enrollment, machine CNG certificates, MSAL application tokens, durable reports and runtime state. |
 | `Factory.Workbench.Setup` | Configuration and Windows Service maintenance, identity-preserving updates, and full owned-local removal with best-effort retirement. |
 | `Factory.Workbench.Installer` / `Factory.Workbench.Package` | Graphical enrollment/service setup and a machine-wide Windows MSI with Installed Apps/start-menu integration. |
-| `Factory.Workbench.Host` | Boot-time Windows Service, certificate-authenticated activation/registration/presence, and foreground diagnostics. No WSL or assignment execution. |
+| `Factory.Workbench.Host` | Boot-time Windows Service, certificate-authenticated activation/registration/presence, line configuration discovery/acknowledgment, and foreground diagnostics. No WSL or mission execution. |
 | `Factory.Tests` | Isolated HTTP, authorization, transactions, OIDC/cookies/forms, serialization, OpenAPI and local workbench setup checks. |
 | `api` | [Contract for plant, enrollment and workbench REST operations](api/README.md). |
 | `bootstrap` / `deploy` | Tiered setup scripts and shared/environment-specific Bicep. |
@@ -38,6 +38,83 @@ The website lists, creates and displays plants and shows workbench inventory. Pl
 Assignment execution, group resolution, automatic certificate rotation, and signed production packaging are not implemented. Enrollment is disabled unless an administrator configures the explicit provisioning identity. There is no runtime seed, demonstration identity, interactive-credential fallback or local database substitute. The existing `src\Workbench` projects remain unchanged.
 
 `GET /health/live` proves process liveness only, not Azure connectivity or successful authentication.
+
+## Production lines
+
+Use **Production lines** in the website to create an owned line definition. Specify the source repository/base branch, versioned workload-folder location, independent GitHub Issues repository/required labels, logical connection references, and bounded execution policy. Saving persists the configuration and an immutable revision in Cosmos; it does not access GitHub, provision credentials, or enable execution.
+
+From the **plant page**, select **Manage production line** and enter the line ID. Assignment requires ownership of both plant and line; no workbench is required yet. One line is configured per plant initially; the same line can be assigned to multiple owned plants. Active enrolled workbenches inherit the plant's current configuration, including devices assigned later. Emptying or replacing the line ID revokes the old configuration for all members. Device unassignment/move revokes that device's old configuration; joining or returning to a plant inherits its current line under a new membership version, never reusing the old memo.
+
+The upgraded host receives and persists the line configuration, then acknowledges its exact membership/plant-binding/line revision. A defined line reports **blocked** because repository workload retrieval, unattended GitHub/Copilot access and worker execution are not implemented yet. No line reports **unconfigured**. Each workbench's detail page shows inherited desired configuration and its last observed acknowledgment separately; neither is a claim or proof of remote termination.
+
+This corrects the initial workbench-scoped assignment model. The old workbench assignment routes are removed; existing workbench-partition bindings are retained but ignored, not promoted to plant-wide authority. After deploying this correction, explicitly assign the line on the plant page. Deploy it before installing the first configuration-discovery host upgrade.
+
+For ProductZero, enter its name and `chieftn/productionOutput1` as source/issue repository with workload folder `productionLine`. Confirm the actual base branch, approval labels, connection identifiers, limits and target plant/workbench before live configuration. ProductZero has no special code path or runtime seed.
+
+Deploy the service's new configuration endpoints before upgrading a host to this slice. No live deployment or test-machine installation is performed by building it. See the [execution plan](../../docs/development-missions-execution-plan.md) and [REST contract](api/README.md#production-line-configuration-synchronization).
+
+## Continuous development workflow
+
+The local implementation supports one issue at a time: **eligible issue -> Implementation/verification/Alignment -> draft PR -> trusted review/revisions -> merge -> next issue**. The plant selects open GitHub issues in oldest-created order with every configured selection label and an explicit `## Acceptance criteria` bullet list. It excludes pull requests and durable issue claims. An empty queue is idle and is polled again. Discovery stops with an explicit error after 500 scanned results; use narrower selection labels if necessary.
+
+Declare completion in the repository's `workload.json`, separately from issue acceptance criteria and project verification:
+
+```json
+"workflow": {
+  "type": "implementation-alignment",
+  "maximumIterations": 3,
+  "timeoutMinutes": 30,
+  "completionCriterion": "pull_request_merged"
+}
+```
+
+Only `pull_request_merged` is supported. Existing manifests without it remain readable with their original digests, but cannot authorize execution until it is declared. Nonempty repository-defined verification commands are still required; Factory does not invent task-specific checks.
+
+Approval moves the mission to `awaitingMerge`, not completion. Trusted current-head feedback can still trigger bounded revisions. The plant independently checks GitHub's merged flag and the exact owned PR repository, mission marker, branch, base and candidate before accepting `completed`. Factory never merges. Closed-but-unmerged PRs, exhausted review/merge deadlines and unresolved failures retain the issue claim and stop progression for reconciliation. The original deadline also bounds merge waiting; active execution budgets exclude human waits.
+
+The host uses `POST /v1/enrollments/{id}/mission/next`; no fixed issue number is needed. The legacy `assignedIssueNumber` setting remains readable but is ignored. A new mission requires both prior merged completion and confirmed worker termination. Queue requests survive lost responses/restarts, and the next issue uses a newly resolved source snapshot after merge. Repository/line authority, local allowlists, service-process SDK readiness, and independent disabled-by-default execution gates remain required.
+
+The matching service is deployed as `59b0d1c2-7788-4018-8b37-c6455bb8f4fd`; unsigned MSI `0.1.8` / `workbench-0.1.8-queue-001` is built and statically verified for an in-place upgrade. Existing production configuration was preserved. Execution remains disabled; no product repository, installed test machine or model workflow was changed by this rollout. See the [installation handoff](../../docs/workbench-installation-test.md) for the package and remaining activation prerequisites.
+
+### Managed workbench activation
+
+The production-line form now has optional **Workbench execution** settings:
+model identifier, commit author, trusted GitHub reviewers, bounded review/merge
+deadline and an enable switch. Save those once on the line, using its existing
+repository connections and the owner's **Copilot access** authorization. These
+are nonsecret settings delivered through the existing assignment flow, not
+credentials to copy into local JSON. Old line definitions omit `execution`
+entirely, preserving frozen workload and mission digests.
+
+After deploying the matching service and upgrading the client, use **Prepare
+SDK worker**, then **Start line...** in Setup. Start shows the assigned line,
+repositories, model and commit/reviewer identities and requests explicit local
+shell/publication consent. It rechecks the assignment, resolves the workload,
+requires real project verification and `pull_request_merged`, checks preparation,
+and configures the repository allowlist without replacing enrollment. The service
+revalidates SDK readiness and current repository/model authority before claiming
+work. Setup displays the new service process's actual state or blocker.
+
+Consent is bound to the plant membership, line binding and both repositories.
+Moving plants, replacing a binding or changing repositories requires new consent;
+it never silently widens local authority. **Stop line** revokes consent and
+stops owned execution, retaining unresolved mission journals. A line execution
+policy change revokes existing mission authority; disabling the line blocks
+further work. Stop the line before changing its prepared Linux environment.
+
+The Windows service keeps its dedicated identity. Machine certificates authenticate
+it to Factory; existing mission-scoped pipes deliver renewable GitHub/Copilot
+access tokens. App keys, OAuth client secrets and refresh tokens remain in the
+service vault. Neither desktop login nor Windows impersonation is used.
+The commit author is Git metadata, not an authentication identity.
+
+When `Factory:Development:Enabled` is unset, explicitly enabled managed lines
+use their own execution policy; legacy lines remain disabled without their old
+service settings. Explicit `false` remains an operator shutdown override for all
+lines. No per-line App Service setting is required. See the
+[installation handoff](../../docs/workbench-installation-test.md) for the current
+service deployment, MSI and outstanding live acceptance; this feature does not
+by itself prove a live model workflow.
 
 ## Windows installer and registration
 
@@ -60,7 +137,13 @@ Developers build the **unsigned development MSI** on Windows x64 with .NET 10:
     -AllowUnsignedPackage
 ```
 
-The build pins WiX SDK/extensions to 4.0.6 (MS-RL) and publishes self-contained tools/runtime plus an embedded lifecycle helper. It does not install the result. MSI versions increase as three numeric components; never reuse a release ID for different bits. `-SkipMsiValidation` is an explicit build-only option for environments where Windows Installer ICE validation cannot run; it does not constitute a passed installer acceptance check.
+The build pins WiX SDK/extensions to 4.0.6 (MS-RL) and publishes self-contained tools/runtime plus an embedded lifecycle helper. The hashed runtime payload includes the self-contained Linux x64 SDK worker and its SDK-pinned Copilot runtime under `host\worker\linux-x64`, plus a checksum-pinned Ubuntu Base 24.04.5 image. The build downloads and verifies these dependencies; it does not install them on the build machine. MSI versions increase as three numeric components; never reuse a release ID for different bits. `-SkipMsiValidation` is an explicit build-only option for environments where Windows Installer ICE validation cannot run; it does not constitute a passed installer acceptance check.
+
+After upgrading, select **3. Prepare SDK worker...** in Factory Workbench Setup. Confirm the WSL prerequisite installation if needed; Windows may require a restart followed by reopening setup. The Windows service—not the administrator's interactive WSL session—imports its dedicated `Factory-<installation-id>` distribution, installs Linux dependencies, and copies the packaged worker into `/opt/factory/releases/<release-id>`. The worker runs as an unprivileged Linux user. Windows drive automount and executable interop are disabled for this dedicated distribution. No personal distribution is adopted or changed.
+
+The same action checks writable workspace access, Git and actual SDK startup without a model call, then terminates the whole owned distribution and confirms it stopped. The setup window displays progress and the failed stage if preparation is blocked. **Save diagnostics...** includes the bounded worker-setup result, not credentials. The host rechecks readiness on startup; mission claims require a current-process/current-release successful result. Mission shutdown uses whole-distribution termination for this owned environment, including descendants outside the worker's process group. Full uninstall unregisters only the verified installation-owned distribution through the same service identity before removing its state. Failed or uncertain registration/removal is retained for recovery, not overwritten.
+
+This provisioning path still requires physical acceptance on the dedicated test machine, especially virtual-service-account WSL registration and cold boot without human logon. Source tests and an MSI build do not establish those capabilities. Worker preparation does not enable local or plant mission policy, prove subscription/model entitlement, select an issue or publish a pull request.
 
 MSI owns `%ProgramFiles%\Factory\Workbench Setup` (tools and source payload); lifecycle setup owns `%ProgramFiles%\Factory\Workbench\releases` (selected/previous runtime). Privileged installed helper execution requires a protected location beneath 64-bit Program Files, without filesystem links or untrusted write access. A newer MSI updates an existing runtime while preserving identity, membership, configuration, journals and intentional stop/run intent. Ordinary rollback restores the prior selection. A removal intent blocks restart/re-enrollment, and rollback must not undo remote revocation or restart that device.
 

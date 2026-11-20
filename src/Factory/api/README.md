@@ -57,6 +57,28 @@ Retirement revokes access before deleting only the recorded, owned machine ident
 
 New enrollment is disabled without explicit server provisioning configuration. Disabling new enrollment does not disable existing machine connections, status or retirement; retain the provisioner configuration to process directory cleanup. The installer receives neither a client secret nor Graph grants. The resulting machine uses its own certificate for `Workbench.Connect`, never the human's token. See [bootstrap](../bootstrap/tenant/README.md#enable-workbench-enrollment) and [installer](../README.md#windows-installer-and-registration).
 
+## Production-Line Configuration Synchronization
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET / POST | `/v1/production-lines` | List owned lines or create a configurable line owned by the current Factory user. |
+| GET / PUT | `/v1/production-lines/{lineId}` | Read/update an owned definition; PUT requires an idempotency key and current strong ETag. |
+| GET / PUT | `P/production-line` | Read the plant's assignment; assign/revoke under plant and line ownership using `expectedVersion`. |
+| GET | `E/{operationId}/configuration` | Exact active machine obtains current membership, binding and desired line configuration, including while unassigned. |
+| PUT | `E/{operationId}/configuration-observation` | Exact active machine durably acknowledges its configuration identity/state, using an idempotency key. |
+
+Definitions and immutable configuration revisions live in Cosmos. Source repository/base branch/workload folder, independent issue selection, logical connection references and execution limits are configurable. This is the service registration contract, not a replacement for the existing production-method metadocument schema. Instructions remain in the referenced repository folder.
+
+The first binding supports one configured line per plant; a line can be assigned to several owned plants. Assigning requires ownership of both line and plant, not an existing workbench. All active enrolled members inherit the plant's current line, including devices assigned later. Inheritance is configuration delivery, not execution readiness or a grant beyond local policy. No new directory role grants are required. Device admission/membership remains separate.
+
+Bindings and their audit are committed in the plant partition using conditional writes. Configuration observations remain fenced by enrollment identity, membership version, plant-binding version and line revision. Device unassignment/move revokes its old configuration; joining or returning inherits the destination plant's current assignment under a new membership version. Clearing or replacing a plant's line revokes the old configuration for every member. The host discovers changes on its existing 15-second connection loop, clears local revoked configuration, and acknowledges through its Factory route. Network request timeouts add to discovery latency; a server-side change is not proof of immediate remote termination.
+
+The initial workbench-scoped assignment API is removed rather than silently widened to change an entire plant. Existing workbench-partition bindings are retained but ignored. Explicitly assign the plant after deploying the correction; no legacy binding is automatically promoted. The configuration-discovery host increment has not been installed, so this corrected service is the prerequisite for its first rollout.
+
+The current host persists the received configuration under `runtime\line-configuration.json` and reports `blocked` for a defined line, or `unconfigured` when there is none. It does not fetch the repo workload, install prerequisites, claim issues, invoke Copilot, or launch worker processes. `ready` reports are rejected. Existing connection-only clients remain non-executable but do not acknowledge configuration until upgraded. The new host requires the service's configuration endpoints before rollout.
+
+Observations contain membership/binding/line revisions and server timestamps. New stale reports return `configuration_changed`; identical retries do not refresh or overwrite a newer observation. The website displays desired and observed configuration separately. No claim is released by an observation. Actual hard-stop controls for future SDK/worker execution, bounded contact-loss stopping, and graceful quiescing remain future work.
+
 ## Validation
 
 Validate parsing, references and OpenAPI rules from the repository root:

@@ -31,11 +31,14 @@ public sealed class CertificateTokenSource
 public sealed record PendingWorkbenchReport<T>(string SchemaVersion, string InstallationId, string? PlantId,
     string WorkbenchId, string OperationId, T Body, string? EnrollmentId = null, long AssignmentVersion = 0);
 
-public sealed class WorkbenchPlantConnection(PlantHttp plant, WorkbenchBinding binding, string release, string root)
+public sealed class WorkbenchPlantConnection(PlantHttp plant, WorkbenchBinding binding, string release, string root,
+    Func<WorkbenchLineConfiguration, CancellationToken, Task>? configurationObserved = null,
+    Func<(string State, string Reason)>? executionObserved = null)
 {
     private bool activated;
     private long? registeredVersion;
     public string? AssignedPlantId { get; private set; }
+    public WorkbenchConfigurationObservation? ConfigurationObservation { get; private set; }
     public async Task PublishAsync(CancellationToken cancellationToken)
     {
         var runtime = LocalState.RuntimeDirectory(root);
@@ -47,10 +50,6 @@ public sealed class WorkbenchPlantConnection(PlantHttp plant, WorkbenchBinding b
                 null, binding.EnrollmentId, cancellationToken);
             activated = true;
         }
-        await Report("factory-presence", enrollmentPath + "/presence", new WorkbenchPresence
-        {
-            SchemaVersion = "1", Status = "notReady", Reason = "Enrolled in Factory; execution is unavailable."
-        }, null, 0);
         var assignment = await plant.ReadAsync<WorkbenchAssignment>(enrollmentPath + "/connection", cancellationToken);
         if (assignment.SchemaVersion != "1" || assignment.EnrollmentId != binding.EnrollmentId ||
             assignment.WorkbenchId != binding.WorkbenchId || assignment.Version < 0 ||
@@ -58,6 +57,34 @@ public sealed class WorkbenchPlantConnection(PlantHttp plant, WorkbenchBinding b
                 plantId == Guid.Empty || assignment.Version == 0))
             throw new InvalidDataException("Factory returned an invalid assignment.");
         AssignedPlantId = assignment.PlantId;
+        WorkbenchLineConfigurationStore.ObserveMembership(root, binding, assignment);
+        ConfigurationObservation = WorkbenchLineConfigurationStore.Read(root, binding)?.Observation;
+        if (configurationObserved is not null && WorkbenchLineConfigurationStore.Read(root, binding) is { } membership)
+            await configurationObserved(membership.Configuration, cancellationToken);
+        var configuration = await plant.ReadAsync<WorkbenchLineConfiguration>(enrollmentPath + "/configuration", cancellationToken);
+        if (configuration.AssignmentVersion < assignment.Version ||
+            configuration.AssignmentVersion == assignment.Version && configuration.PlantId != assignment.PlantId)
+            throw new InvalidDataException("Factory returned conflicting configuration discovery responses.");
+        var applied = WorkbenchLineConfigurationStore.Apply(root, binding, configuration);
+        if (configurationObserved is not null)
+            await configurationObserved(configuration, cancellationToken);
+        applied = await WorkbenchWorkloadStore.ObserveAsync(root, binding, applied, plant, cancellationToken);
+        ConfigurationObservation = applied.Observation;
+        await Report("configuration-observation", enrollmentPath + "/configuration-observation",
+            applied.Observation, configuration.PlantId, configuration.AssignmentVersion);
+        if (configuration.AssignmentVersion != assignment.Version)
+        {
+            registeredVersion = null;
+            AssignedPlantId = configuration.PlantId;
+            return;
+        }
+        var execution = executionObserved?.Invoke() ?? ("notReady", "Factory connected; execution is disabled.");
+        await Report("factory-presence", enrollmentPath + "/presence", new WorkbenchPresence
+        {
+            SchemaVersion = "1",
+            Status = execution.Item1,
+            Reason = execution.Item2
+        }, null, 0);
         if (AssignedPlantId is null)
         {
             registeredVersion = null;
@@ -68,16 +95,23 @@ public sealed class WorkbenchPlantConnection(PlantHttp plant, WorkbenchBinding b
         {
             await Report("registration", basePath + "/registration", new WorkbenchRegistration
             {
-                SchemaVersion = "1", MachineName = Environment.MachineName, HostVersion = release,
-                WorkerVersion = "unavailable", ProtocolVersion = "1", AssignmentSchemaVersions = ["1"],
-                Capabilities = ["plant-connection"], AssignmentVersion = assignment.Version
+                SchemaVersion = "1",
+                MachineName = Environment.MachineName,
+                HostVersion = release,
+                WorkerVersion = "unavailable",
+                ProtocolVersion = "1",
+                AssignmentSchemaVersions = ["1"],
+                Capabilities = ["plant-connection", "line-configuration", "repository-workload", "development-mission-control"],
+                AssignmentVersion = assignment.Version
             }, AssignedPlantId, assignment.Version);
             registeredVersion = assignment.Version;
         }
         await Report("presence", basePath + "/presence", new WorkbenchPresence
         {
-            SchemaVersion = "1", Status = "notReady", AssignmentVersion = assignment.Version,
-            Reason = "Plant connected. Worker execution and service-owned WSL are not installed."
+            SchemaVersion = "1",
+            Status = execution.Item1,
+            AssignmentVersion = assignment.Version,
+            Reason = executionObserved is null ? ConfigurationObservation.Reason : execution.Item2
         }, AssignedPlantId, assignment.Version);
 
         async Task Report<T>(string type, string endpoint, T body, string? currentPlant, long version)
@@ -92,7 +126,8 @@ public sealed class WorkbenchPlantConnection(PlantHttp plant, WorkbenchBinding b
                     throw new InvalidDataException("A pending plant report does not match this installation.");
                 if (previous.AssignmentVersion > version || previous.AssignmentVersion == version && previous.PlantId != currentPlant)
                     throw new InvalidDataException("A pending report conflicts with the authoritative assignment version.");
-                if (previous.AssignmentVersion == version)
+                if (previous.AssignmentVersion == version &&
+                    (type != "configuration-observation" || Equals(previous.Body, body)))
                     await plant.WriteAsync(HttpMethod.Put, endpoint, previous.Body, previous.OperationId, cancellationToken);
                 else
                     Console.Error.WriteLine($"Discarding obsolete {type} report {previous.OperationId} after an assignment change.");

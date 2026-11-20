@@ -25,7 +25,7 @@ using Xunit;
 
 namespace Factory.Tests;
 
-public sealed class WebsiteTestApplication(string environment = "Development") : ApiTestApplication
+public class WebsiteTestApplication(string environment = "Development") : ApiTestApplication
 {
     public bool EnableEnrollment { get; init; }
     private readonly Dictionary<string, string> tokens = [];

@@ -129,7 +129,7 @@ public sealed class SetupDiagnostics
 
     public void Suspend() => suspended = true;
 
-    public void Export(string destination, string root, string? msiLog = null)
+    public void Export(string destination, string root, string? msiLog = null, MissionDiagnosticStatus? mission = null)
     {
         var full = Path.GetFullPath(destination);
         RejectNested(full, root);
@@ -168,14 +168,50 @@ public sealed class SetupDiagnostics
             if (remaining <= 0)
                 writer.WriteLine("[MSI log truncated at 20 MiB]");
         }
+        if (File.Exists(WslWorkerEnvironment.StatusPath(root)))
+        {
+            var worker = LocalState.Read<WorkerSetupStatus>(WslWorkerEnvironment.StatusPath(root));
+            using var writer = new StreamWriter(archive.CreateEntry("worker-setup.json").Open());
+            writer.Write(JsonSerializer.Serialize(worker with { Detail = Redact(worker.Detail) }, Json));
+        }
+        if (mission is not null)
+        {
+            var installationState = LocalState.ReadInstallation(root);
+            if (mission.InstallationId != installationState.InstallationId || mission.ReleaseId != installationState.ActiveRelease ||
+                mission.State is not ("collected" or "failed") || mission.State == "collected" && mission.Mission is null)
+                throw new InvalidDataException("Mission diagnostic export does not match the installed runtime.");
+            if (mission.Mission is { } retained)
+            {
+                var snapshot = WorkbenchMissionDiagnostics.ReadSnapshot(root);
+                if (retained.MissionId != snapshot.Mission.Id || retained.MissionDigest != snapshot.Mission.Digest)
+                    throw new InvalidDataException("The retained mission changed before diagnostic export.");
+                mission = mission with { Mission = retained with { Reason = Redact(retained.Reason) } };
+            }
+            using var writer = new StreamWriter(archive.CreateEntry("mission-diagnostics.json").Open());
+            writer.Write(JsonSerializer.Serialize(mission with { Detail = Redact(mission.Detail) }, Json));
+        }
+        var telemetryDirectory = MissionTelemetry.DirectoryPath(root);
+        if (Directory.Exists(telemetryDirectory) && File.Exists(WorkbenchMissionDiagnostics.SnapshotPath(root)))
+        {
+            var snapshot = WorkbenchMissionDiagnostics.ReadSnapshot(root);
+            var entries = MissionTelemetry.ReadLocal(root, snapshot.Mission.Id, snapshot.Mission.Digest);
+            using var writer = new StreamWriter(archive.CreateEntry("mission-telemetry.jsonl").Open());
+            foreach (var entry in entries)
+                writer.WriteLine(JsonSerializer.Serialize(entry with
+                { Errors = entry.Errors.Select(error => error with { Message = MissionTelemetry.Safe(error.Message) }).ToArray() }, Json));
+        }
         using var summary = new StreamWriter(archive.CreateEntry("summary.json").Open());
         var installation = File.Exists(Path.Combine(root, "installation.json")) ? LocalState.ReadInstallation(root) : null;
         summary.Write(JsonSerializer.Serialize(new
         {
-            collectedAt = DateTimeOffset.UtcNow, installation?.InstallationId, installation?.ActiveRelease,
-            installation?.State, enrollmentId = File.Exists(Path.Combine(root, "enrollment.json"))
+            collectedAt = DateTimeOffset.UtcNow,
+            installation?.InstallationId,
+            installation?.ActiveRelease,
+            installation?.State,
+            enrollmentId = File.Exists(Path.Combine(root, "enrollment.json"))
                 ? BindingStore.ReadJournal(root).OperationId : null,
-            note = "No configuration, certificate, private key, user-token cache or raw runtime exception log is included."
+            missionDiagnostics = mission?.State ?? "not-collected",
+            note = "No configuration, certificate, private key, user-token cache, agent session contents or raw runtime exception log is included."
         }, Json));
     }
 
@@ -201,10 +237,18 @@ public sealed class SetupDiagnostics
             throw new InvalidDataException("Save diagnostics outside installation-owned directories so uninstall will not remove the export.");
     }
 
-    private static string Redact(string line)
+    public static string Redact(string line)
     {
-        line = Regex.Replace(line, @"(?i)(Bearer\s+|(?:access_token|refresh_token|id_token|client_secret|password)\s*[=:]\s*)[^\s;,""']+",
+        line = Regex.Replace(line, @"(?i)(Authorization\s*:\s*(?:Basic|token)\s+)[^\s]+",
             "$1[redacted]", RegexOptions.None, TimeSpan.FromSeconds(1));
+        line = Regex.Replace(line, @"(?i)(https?://)[^/\s:@]+:[^/\s@]+@", "$1[redacted]@",
+            RegexOptions.None, TimeSpan.FromSeconds(1));
+        line = Regex.Replace(line, @"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\z)",
+            "[redacted private key]", RegexOptions.None, TimeSpan.FromSeconds(1));
+        line = Regex.Replace(line, @"(?i)(Bearer\s+|(?:access_token|refresh_token|id_token|client_secret|password|api[_-]?key)\s*[""']?\s*[=:]\s*[""']?)[^\s;,""']+",
+            "$1[redacted]", RegexOptions.None, TimeSpan.FromSeconds(1));
+        line = Regex.Replace(line, @"\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b",
+            "[redacted token]", RegexOptions.None, TimeSpan.FromSeconds(1));
         return Regex.Replace(line, @"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
             "[redacted token]", RegexOptions.None, TimeSpan.FromSeconds(1));
     }

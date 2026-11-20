@@ -165,6 +165,7 @@ public static class MachineCertificates
 
     public static void GrantServiceStateAccess(string root, WorkbenchInstallation installation)
     {
+        ValidateServiceRuntimeState(root);
         ProtectStateDirectory(root);
         var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
         var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
@@ -186,10 +187,6 @@ public static class MachineCertificates
             new FileInfo(path).SetAccessControl(fileAcl);
         }
         var runtime = Directory.CreateDirectory(LocalState.RuntimeDirectory(root));
-        if ((runtime.Attributes & FileAttributes.ReparsePoint) != 0 ||
-            Directory.EnumerateFileSystemEntries(runtime.FullName).Any(path =>
-                (File.GetAttributes(path) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0))
-            throw new InvalidDataException("Runtime state must contain only regular files, not nested directories or links.");
         var runtimeAcl = new DirectorySecurity();
         runtimeAcl.SetAccessRuleProtection(true, false);
         runtimeAcl.SetOwner(administrators);
@@ -199,6 +196,65 @@ public static class MachineCertificates
         runtimeAcl.AddAccessRule(new FileSystemAccessRule(service, FileSystemRights.Modify,
             InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
         runtime.SetAccessControl(runtimeAcl);
+        var telemetry = new DirectoryInfo(MissionTelemetry.DirectoryPath(root));
+        if (telemetry.Exists)
+        {
+            telemetry.SetAccessControl(runtimeAcl);
+            foreach (var path in Directory.EnumerateFiles(telemetry.FullName))
+            {
+                var fileAcl = new FileSecurity();
+                fileAcl.SetAccessRuleProtection(true, false);
+                fileAcl.SetOwner(administrators);
+                foreach (var principal in new[] { administrators, system })
+                    fileAcl.AddAccessRule(new FileSystemAccessRule(principal, FileSystemRights.FullControl, AccessControlType.Allow));
+                fileAcl.AddAccessRule(new FileSystemAccessRule(service, FileSystemRights.Modify, AccessControlType.Allow));
+                new FileInfo(path).SetAccessControl(fileAcl);
+            }
+        }
+    }
+
+    public static void ValidateServiceRuntimeState(string root)
+    {
+        var runtime = LocalState.RuntimeDirectory(root);
+        MissionTelemetry.RequireRegularPath(Path.Combine(runtime, "validation"));
+        if (!Directory.Exists(runtime))
+            return;
+        var telemetry = MissionTelemetry.DirectoryPath(root);
+        foreach (var path in Directory.EnumerateFileSystemEntries(runtime))
+        {
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Runtime state must not contain filesystem links.");
+            if ((attributes & FileAttributes.Directory) == 0)
+            {
+                if (path.Equals(telemetry, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Mission telemetry storage must be a directory, not a file.");
+                continue;
+            }
+            if (!path.Equals(telemetry, StringComparison.OrdinalIgnoreCase) ||
+                Directory.EnumerateFileSystemEntries(path).Any(child =>
+                    (File.GetAttributes(child) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0))
+                throw new InvalidDataException("Runtime state permits only regular files and the flat owned mission-telemetry directory; no other directories or links.");
+        }
+    }
+
+    public static void GrantServiceLinuxAccess(string root, WorkbenchInstallation installation)
+    {
+        var path = WslWorkerEnvironment.EnvironmentDirectory(root);
+        if (File.Exists(path) || Directory.Exists(path) &&
+            (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Linux environment storage cannot be a file or link.");
+        var directory = Directory.CreateDirectory(path);
+        var acl = new DirectorySecurity();
+        acl.SetAccessRuleProtection(true, false);
+        acl.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+        foreach (var type in new[] { WellKnownSidType.BuiltinAdministratorsSid, WellKnownSidType.LocalSystemSid })
+            acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(type, null), FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        var service = (SecurityIdentifier)new NTAccount(installation.ServiceAccount).Translate(typeof(SecurityIdentifier));
+        acl.AddAccessRule(new FileSystemAccessRule(service, FileSystemRights.Modify,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        directory.SetAccessControl(acl);
     }
 
     public static X509Certificate2 GetOrCreate(string root)
@@ -221,8 +277,10 @@ public static class MachineCertificates
             ? CngKey.Open(name, CngProvider.MicrosoftSoftwareKeyStorageProvider, CngKeyOpenOptions.MachineKey)
             : CngKey.Create(CngAlgorithm.Rsa, name, new CngKeyCreationParameters
             {
-                Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider, ExportPolicy = CngExportPolicies.None,
-                KeyCreationOptions = CngKeyCreationOptions.MachineKey, KeyUsage = CngKeyUsages.Signing,
+                Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,
+                ExportPolicy = CngExportPolicies.None,
+                KeyCreationOptions = CngKeyCreationOptions.MachineKey,
+                KeyUsage = CngKeyUsages.Signing,
                 Parameters = { new CngProperty("Length", BitConverter.GetBytes(3072), CngPropertyOptions.None) }
             });
         using var rsa = new RSACng(key);

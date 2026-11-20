@@ -60,4 +60,5 @@ public sealed record WorkbenchView(string SchemaVersion, string Id, string Plant
     EntraApplicationPrincipal Identity, string AdmissionState, string ContactState, DateTimeOffset CreatedAt,
     WorkbenchRegistration? Registration = null, DateTimeOffset? RegisteredAt = null, WorkbenchPresence? Presence = null,
     DateTimeOffset? LastSeenAt = null, string? EnrollmentId = null, string? EnrollmentState = null,
-    string? EnrollmentError = null);
+    string? EnrollmentError = null, WorkbenchConfigurationObservation? ConfigurationObservation = null,
+    DateTimeOffset? ConfigurationObservedAt = null);

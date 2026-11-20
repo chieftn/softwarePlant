@@ -38,6 +38,20 @@ public partial class Program
         builder.Services.AddOptions<EnrollmentSettings>().BindConfiguration("Factory:Enrollment");
         builder.Services.AddSingleton(services => services.GetRequiredService<IOptions<EnrollmentSettings>>().Value);
         builder.Services.AddScoped<EnrollmentOperations>();
+        builder.Services.AddOptions<GitHubConnectionsSettings>().BindConfiguration("Factory:GitHub");
+        builder.Services.AddSingleton(services => services.GetRequiredService<IOptions<GitHubConnectionsSettings>>().Value);
+        builder.Services.AddSingleton<IGitHubConnectionSecrets, KeyVaultGitHubConnectionSecrets>();
+        builder.Services.AddSingleton<IGitHubOnboardingClient, GitHubOnboardingClient>();
+        builder.Services.AddSingleton<ManagedGitHubConnections>();
+        builder.Services.AddSingleton<ICopilotSecrets, KeyVaultCopilotSecrets>();
+        builder.Services.AddSingleton<IGitHubCopilotOAuth, GitHubCopilotOAuth>();
+        builder.Services.AddSingleton<ManagedCopilotAccess>();
+        builder.Services.AddSingleton<IMissionModelAccess>(services => services.GetRequiredService<ManagedCopilotAccess>());
+        builder.Services.AddSingleton<GitHubRepositoryReader>();
+        builder.Services.AddSingleton<IGitHubRepositoryReader>(services => services.GetRequiredService<GitHubRepositoryReader>());
+        builder.Services.AddSingleton<IGitHubDevelopmentRepository>(services => services.GetRequiredService<GitHubRepositoryReader>());
+        builder.Services.AddOptions<DevelopmentMissionSettings>().BindConfiguration("Factory:Development");
+        builder.Services.AddSingleton(services => services.GetRequiredService<IOptions<DevelopmentMissionSettings>>().Value);
         builder.Services.AddScoped<EnrollmentProcessor>();
         builder.Services.AddSingleton<IDirectoryProvisioner, GraphDirectoryProvisioner>();
         builder.Services.AddHostedService<EnrollmentWorker>();
@@ -130,7 +144,9 @@ public partial class Program
                 {
                     context.Response.Headers.CacheControl = "no-store";
                     context.Response.Headers["Content-Security-Policy"] =
-                        "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https://login.microsoftonline.com";
+                        "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https://login.microsoftonline.com" +
+                        (context.Request.Path.StartsWithSegments("/repository-connections") ||
+                         context.Request.Path.StartsWithSegments("/copilot-access") ? " https://github.com" : "");
                     context.Response.Headers["Referrer-Policy"] = "no-referrer";
                     context.Response.Headers.XContentTypeOptions = "nosniff";
                     return Task.CompletedTask;

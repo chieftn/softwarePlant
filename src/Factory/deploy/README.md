@@ -39,6 +39,215 @@ Use the application's OIDC authentication, not App Service Easy Auth. Users need
 
 Complete the [privileged enrollment bootstrap](../bootstrap/tenant/README.md#enable-workbench-enrollment) only after explicit approval of the Graph grants. Set `installerClientId` and `enrollmentEnabled=true` in the hosting parameters when the public installer and managed provisioner are configured. Production provisioning is managed-identity-only; never reuse the data identity. Preserve the existing browser-authentication parameters. The [live installation working document](../../../docs/workbench-installation-test.md) tracks package handoff and machine acceptance separately from service deployment.
 
+### Managed GitHub repository connections
+
+The website's **Repository connections** page automates GitHub App registration,
+private-key storage, installation verification and reusable line connection
+references. It infers the vault from the existing `Factory:Web:DataProtectionKeyId`
+and uses the existing data identity. No per-connection App Service setting or
+manual PEM upload is required.
+
+Before using this feature, review and deploy
+[`github-connections.production.bicep`](github-connections.production.bicep) once,
+with the existing `vaultName` and `dataIdentityName`. It defines a custom role
+containing only Key Vault secret-value get/set and assigns it at the selected
+vault. **That permission covers all secrets in that vault**, not just GitHub
+secret names. It cannot list, delete or purge secrets, manage keys, or change
+RBAC. This is a new permission requiring explicit approval; existing website
+secret-read and cookie-key grants alone are not sufficient. The module does not
+redeploy the app/settings/network, create a vault or call GitHub.
+
+The service checks actual secret write/read access before offering GitHub app
+creation, using the noncredential `factory-github-onboarding-access-check`
+secret. Registration bundles are then stored as `github-<connection UUID N>`
+secrets. Only identifiers, ownership, repository allowlists and lifecycle state
+are persisted in Cosmos. Tokens and private keys are never included in forms,
+connection records or line definitions.
+
+After service deployment, sign in, open **Repository connections**, give the
+connection a name, optionally select an organization, and choose whether it may
+publish. Approve app creation on GitHub, install it with **Only select repositories**,
+then select **Verify / refresh repository access**. The first implementation
+supports installations on the private app's owning account. Reuse that connection
+in any of your production lines; no GitHub setup is required on their machines.
+Connections are scoped to their Factory owner's Entra identity; organization-wide
+sharing/delegation is not implemented. Existing configuration-backed references
+remain supported.
+
+Read-only setup requests Contents, Issues and Pull requests read. Publication
+opt-in requests Contents and Pull requests write; Issues stays read only.
+Changing this permission profile later requires a new reviewed setup; repository
+selection can be changed on GitHub and refreshed. Disabled connections deny new
+Factory grants and mission authorization, but cannot undo already-issued tokens
+or remote side effects. GitHub app uninstall/key rotation is a separate operator
+action. Interrupted manifest exchanges never replay credential creation; the
+detail page can recover a registration already saved in Key Vault. If no key was
+saved, reconcile/delete the incomplete GitHub App before starting another setup.
+Once the one-use exchange starts, a bounded 45-second completion path attempts to
+preserve the key even if the initiating browser disconnects.
+
+Deployment and permission verification do not establish that the signed-in
+website flow, service-identity vault writes or GitHub installation work end to end.
+Complete that acceptance with the first connection. Model access and client
+rollout remain separate.
+
+Local validation passed 95 focused onboarding, ownership, browser, workload,
+mission and API-contract cases. The new Bicep module compiled offline, and
+changed-C# whitespace verification and `git diff --check` passed.
+
+Production rollout completed November 16, 2026 with explicit approval of the
+vault-wide secret get/set grant. Deployment
+`940198a7-2abf-41ad-9419-9496f4ee9250` is active on
+`https://factory-prod-qm3qqqsg45-web.azurewebsites.net`; the exact custom role and
+vault-scoped data-identity assignment were verified. All 24 existing settings,
+authentication, identities and hosting/network configuration were preserved.
+Anonymous health, browser sign-in/PKCE and bearer-only API checks passed; agent
+execution remains disabled. Signed-in connection creation/vault storage/GitHub
+installation remain unverified. The ignored release folder
+`artifacts\service\github-onboarding-20261116-001` contains package/source hashes,
+preflight/postflight snapshots, ARM preview/deployment/permission evidence and
+HTTP acceptance. No client rollout or model activation was performed.
+
+### Copilot subscription authorization
+
+The service provides **Copilot access** (`/copilot-access`). Create its
+authorization app, then select **Authorize Copilot subscription** and choose the
+GitHub account with the subscription. This is a separate private GitHub App with
+no repository permissions; it does not replace or reinstall repository apps and
+does not need repository installation. Both app registration and OAuth user
+credentials go directly to the existing website vault. The previously approved
+vault get/set role supports this path; no additional Azure setting or grant is
+introduced.
+
+One authorization belongs to each Factory user and supplies model access for
+production lines that user owns. Machines inherit that authority through their
+current plant/line assignment; they do not sign in individually. All usage still
+belongs to the authorized GitHub account and shares its subscription limits and
+organization policies. Successful OAuth proves account authorization, **not**
+Copilot entitlement or availability of a selected model. The real SDK session
+checks those, and must fail rather than use another identity.
+
+The flow uses protected, owner-bound, expiring state, PKCE S256 and
+`offline_access`. User tokens are refreshed before fewer than 70 minutes remain.
+Refresh is conditionally owned in Cosmos so concurrent machines cannot consume
+the same rotating refresh token. App and token results use attempt-specific
+vault secrets; Cosmos contains only metadata and selected credential IDs.
+An interrupted one-use exchange/refresh is never replayed automatically:
+**Recover saved authorization** can select a result already saved in the vault.
+If no user token was saved, explicitly authorize again. If app creation was
+interrupted without a saved registration, reconcile the app on GitHub before
+explicitly restarting app creation. Old vault versions/attempt secrets are
+retained for operator recovery, not automatically deleted.
+
+Workers request only access tokens through the enrollment's bearer-protected
+`mission/model-credential` endpoint and owned pipe. It checks the exact executing
+mission, frozen model, current membership, binding, repository/issue authority
+and owner's model authorization, both before and after acquisition. Refresh
+tokens/client secrets stay in the service. Access tokens stay in worker memory;
+no token is included in the startup packet, journals or command arguments.
+Ordinary plant HTTP requests retain a 30-second deadline; model-credential
+requests allow 60 seconds for bounded refresh, with a 65-second pipe deadline.
+
+The SDK uses its session-scoped GitHub token provider with
+`UseLoggedInUser=false`, including renewal callbacks; the old
+`FACTORY_WORKBENCH_COPILOT_TOKEN` input is no longer used. Host and Linux worker
+must be upgraded together because their internal startup contract changed.
+The pinned SDK marks the callback experimental (`GHCP001`); the opt-in is
+restricted to the adapter and its tests.
+
+**Disable Copilot access** denies fresh credentials and ongoing mission
+authorization checks. It does not revoke already-issued GitHub tokens; revoke
+the authorized app on GitHub when immediate external revocation is needed.
+Tokens are user/app credentials, not GitHub-enforced per-mission/per-model grants.
+
+`IMissionModelAccess` and the provider-tagged credential form the extension point
+for future Azure/Entra authentication. Only `github-copilot` is implemented now;
+no Azure model resource, identity, quota or billing configuration is added.
+After explicit approval, service deployment
+`98c21c77-d7e7-4d2f-b47c-022ba4846079` completed November 16, 2026 and supersedes
+the repository-onboarding service deployment above. Existing settings (24),
+authentication, identities and hosting/network fingerprints were unchanged;
+the existing vault grant was reused without new permissions. Anonymous health,
+Copilot navigation, browser sign-in/PKCE and bearer-only model-credential checks
+passed. Release evidence is under `artifacts\service\copilot-auth-20261116-001`,
+including source/package hashes, preflight/postflight and HTTP acceptance.
+
+The pending-setup continuation repair is deployed as
+`913b95d4-63a9-4f51-a650-8ba25d4ea8f6`; evidence is under
+`artifacts\service\copilot-auth-resume-20261116-001`. Reopening a pending setup
+now preserves its operation ID and offers **Continue setup**, without requiring
+restart confirmation. Explicit restart is separate and remains required for
+expired attempts. Eight focused browser/auth cases and anonymous live checks
+passed, with production configuration unchanged.
+
+The host/Linux worker changes are implemented but not installed. Signed-in
+Copilot setup and a bounded real SDK entitlement/renewal acceptance run remain
+unperformed. No execution enablement, client installation, GitHub App creation
+on the user's behalf or model call was performed for this increment.
+
+Sources: [SDK GitHub OAuth](https://docs.github.com/en/copilot/how-tos/copilot-sdk/setup/github-oauth),
+[SDK authentication and rotating session tokens](https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/authenticate),
+[GitHub App user tokens/PKCE/offline access](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
+
+### Continuous issue queue and merged completion
+
+The authorized service rollout
+`59b0d1c2-7788-4018-8b37-c6455bb8f4fd` reached RuntimeSuccessful on November 16,
+2026. It adds `mission/next`, eligible-issue discovery and durable selection,
+plus independent GitHub verification of explicit `pull_request_merged`
+completion. Approval alone never permits another claim; the prior worker's
+termination must also be confirmed. Existing task/source adapter boundaries and
+disabled-by-default execution remain in place.
+
+All 24 App Service settings, browser/API authentication, both managed identities,
+Key Vault selection/grants and hosting/network fingerprints matched preflight.
+No infrastructure template, permission, credential or execution setting was
+changed. Health/homepage, protected browser code/PKCE challenges and the new
+queue route's anonymous 401/Bearer response passed. These checks do not claim a
+live model workflow.
+
+The self-contained Linux service archive's 387 entries matched the publish tree;
+69 focused contract/service/worker/host cases passed. Evidence is under
+`artifacts\service\continuous-queue-20261116-002`, with the previous
+`copilot-auth-resume-20261116-001` archive retained for code rollback.
+Matching MSI `0.1.8` is built but not installed by the assistant. The product
+workload still needs completion/verification declarations and eligible issues
+before separate execution activation.
+
+### Managed workbench activation - November 17 deployment
+
+Local changes add optional execution settings to the existing production-line
+definition/form and guided Start/Stop line actions to Workbench Setup.
+The approved code-only deployment `cfca26c6-d010-41a7-8d52-9f9e5ff4f279`
+is RuntimeSuccessful. The self-contained Linux archive has 387 verified entries,
+includes .NET/ASP.NET Core `10.0.15`, and is recorded under
+`artifacts\service\managed-execution-20261117-001`. Its SHA-256 is
+`A1E6A8744A61A6B508664D84BC441BA019AC7B74D40FCFF76FFD72B95E662BAA`.
+
+All 24 App Service settings, browser/API authentication, both managed identities,
+networking and existing vault grants matched preflight. Anonymous health/browser
+OIDC/PKCE and protected API/queue challenge checks passed. No Azure permission,
+credential migration, line configuration, execution setting or model call was
+changed/performed. The prior `continuous-queue-20261116-002` archive is retained
+as code rollback evidence; it does not understand new managed execution fields,
+so any later rollback after those fields are used needs compatibility review.
+
+Matching unsigned MSI `0.1.9` / `workbench-0.1.9-managed-001` is built and
+statically verified, not installed by the assistant. MSI `0.1.8` lacks these
+actions. In-place upgrade and preparation on the dedicated test machine precede
+separately approved live activation. Retooling automation, central operational
+Start/Stop and blanket enrollment delegation remain deferred.
+
+An unset `Factory:Development:Enabled` now permits only explicitly enabled
+line-managed execution, with the line's model/review policy and independent
+local consent. Existing lines without an execution definition remain disabled
+unless legacy service policy explicitly enables them. Explicit `false` remains
+a global shutdown override; do not remove or change an existing override as a
+side effect of deployment. Review it only as part of separately approved
+activation. Legacy service reviewer/deadline settings continue to serve legacy
+lines; managed lines receive those values through the normal owner-scoped form.
+No new secret, per-device token or user impersonation is needed.
+
 ### Private cross-region Cosmos access
 
 [`backend-peering.bicep`](backend-peering.bicep) connects existing, non-overlapping application and Cosmos VNets in the same resource group. Supply `appVnetName` and `cosmosVnetName`. It creates both peering directions with virtual-network access enabled and forwarding/gateway transit disabled. It does not create a web app or database, grant data access, or enable public Cosmos access. Cross-region peering incurs traffic charges.
@@ -100,6 +309,7 @@ az bicep build --file .\src\Factory\deploy\service.production.bicep --stdout | O
 az bicep build --file .\src\Factory\deploy\website.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\website-credential.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\enrollment-identity.production.bicep --stdout | Out-Null
+az bicep build --file .\src\Factory\deploy\github-connections.production.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\backend-peering.bicep --stdout | Out-Null
 az bicep build --file .\src\Factory\deploy\main.bicep --stdout | Out-Null
 pwsh -NoProfile -File .\src\Factory\bootstrap\tests\Bootstrap.Tests.ps1

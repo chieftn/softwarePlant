@@ -7,6 +7,7 @@ public sealed record WorkbenchRuntimeStatus(string SchemaVersion, string Install
     int ProcessId, DateTimeOffset ObservedAt, string State, string Reason)
 {
     public bool PlantConnected { get; init; }
+    public Factory.Contracts.WorkbenchConfigurationObservation? ConfigurationObservation { get; init; }
 }
 
 public sealed record WorkbenchInstallation(
@@ -77,17 +78,20 @@ public static class LocalState
         Write(Path.Combine(root, "installation.json"), state);
     }
 
-    public static T Read<T>(string path)
+    public static T Read<T>(string path, int maximumBytes = 128 * 1024)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
-        if (stream.Length > 128 * 1024)
-            throw new InvalidDataException($"Local state exceeds 128 KiB: {Path.GetFileName(path)}");
+        if (stream.Length > maximumBytes)
+            throw new InvalidDataException($"Local state exceeds its byte bound: {Path.GetFileName(path)}");
         return JsonSerializer.Deserialize<T>(stream, ConfigurationStore.Json)
             ?? throw new InvalidDataException($"Local state must contain an object: {Path.GetFileName(path)}");
     }
 
-    public static void Write<T>(string path, T value)
+    public static void Write<T>(string path, T value, int maximumBytes = 128 * 1024)
     {
+        var content = JsonSerializer.SerializeToUtf8Bytes(value, ConfigurationStore.Json);
+        if (content.Length > maximumBytes)
+            throw new InvalidDataException($"Local state exceeds its byte bound: {Path.GetFileName(path)}");
         var root = Path.GetDirectoryName(Path.GetFullPath(path))!;
         Directory.CreateDirectory(root);
         var temporary = Path.Combine(root, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
@@ -95,7 +99,7 @@ public static class LocalState
         {
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
-                JsonSerializer.Serialize(stream, value, ConfigurationStore.Json);
+                stream.Write(content);
                 stream.Flush(flushToDisk: true);
             }
             File.Move(temporary, path, overwrite: true);

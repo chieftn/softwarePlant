@@ -7,6 +7,7 @@ public static partial class PlantEndpoints
     private static void MapEnrollmentEndpoints(WebApplication app)
     {
         var inventory = app.MapGroup("/v1/enrollments").RequireRateLimiting("api");
+        MapMissionEndpoints(inventory);
         inventory.MapGet("", async (HttpContext context, EnrollmentOperations operations, CancellationToken cancellationToken) =>
         {
             var (size, token) = PageQuery(context);
@@ -88,6 +89,29 @@ public static partial class PlantEndpoints
             await operations.PresenceAsync(PlantId(operationId), ApiCaller.Read(context.User), OperationKey(context),
                 await BodyAsync<WorkbenchPresence>(context, cancellationToken), cancellationToken);
             return Results.NoContent();
+        }).RequireAuthorization("workbench");
+        inventory.MapGet("/{operationId}/configuration", async (string operationId, HttpContext context,
+            EnrollmentOperations operations, CancellationToken cancellationToken) =>
+        {
+            NoQuery(context);
+            return Results.Json(await operations.ConfigurationAsync(PlantId(operationId), ApiCaller.Read(context.User),
+                cancellationToken), Json);
+        }).RequireAuthorization("workbench");
+        inventory.MapPut("/{operationId}/configuration-observation", async (string operationId, HttpContext context,
+            EnrollmentOperations operations, CancellationToken cancellationToken) =>
+        {
+            NoQuery(context);
+            await operations.ObserveConfigurationAsync(PlantId(operationId), ApiCaller.Read(context.User), OperationKey(context),
+                await BodyAsync<WorkbenchConfigurationObservation>(context, cancellationToken), cancellationToken);
+            return Results.NoContent();
+        }).RequireAuthorization("workbench");
+        inventory.MapPost("/{operationId}/workload", async (string operationId, HttpContext context,
+            EnrollmentOperations operations, IGitHubRepositoryReader repositories, CancellationToken cancellationToken) =>
+        {
+            NoQuery(context);
+            context.Response.Headers.CacheControl = "no-store";
+            return Results.Json(await operations.WorkloadAsync(PlantId(operationId), ApiCaller.Read(context.User),
+                await BodyAsync<WorkloadRequest>(context, cancellationToken), repositories, cancellationToken), Json);
         }).RequireAuthorization("workbench");
     }
 }
