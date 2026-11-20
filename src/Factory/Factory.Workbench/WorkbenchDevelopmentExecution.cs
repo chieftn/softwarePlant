@@ -55,7 +55,7 @@ public sealed class WorkbenchDevelopmentExecution(PlantHttp plant, WorkbenchBind
         if (worker is not null)
         {
             State = "busy";
-            Reason = "Owned frozen mission active; SDK sessions close before human review waits.";
+            Reason = worker.Activity;
             if (!worker.Completion.IsCompleted)
                 return;
             try { await worker.Completion; }
@@ -64,6 +64,11 @@ public sealed class WorkbenchDevelopmentExecution(PlantHttp plant, WorkbenchBind
                 Reason = "Worker stopped with an unresolved mission boundary; retained evidence requires reconciliation.";
             }
             finally { await StopAsync(CancellationToken.None); }
+            return;
+        }
+        if (File.Exists(MissionRetry.RequestPath(root)))
+        {
+            await RetryAsync(cancellationToken);
             return;
         }
         var workload = WorkbenchWorkloadStore.Read(root, binding, current);
@@ -112,7 +117,15 @@ public sealed class WorkbenchDevelopmentExecution(PlantHttp plant, WorkbenchBind
                 delivery.State == "needsAttention" && !delivery.PublicationPending)
             {
                 State = "notReady";
-                Reason = $"Owned mission requires reconciliation ({delivery.State}); no automatic replay.";
+                var failure = delivery.State == "needsAttention"
+                    ? MissionTelemetry.ReadLocal(root, delivery.Mission.Id, delivery.Mission.Digest)
+                        .LastOrDefault(entry => entry.Outcome == "failed" && entry.Errors.Length > 0 &&
+                            entry.Stage is not ("worker" or "worker-pipe" or "worker-stderr"))
+                    : null;
+                Reason = failure is null ? $"Owned mission requires reconciliation ({delivery.State}); no automatic replay."
+                    : $"Mission failed at {failure.Stage}: {failure.Errors[0].Code ?? failure.Errors[0].Type}: {failure.Errors[0].Message}";
+                if (Reason.Length > 256)
+                    Reason = Reason[..256];
                 return;
             }
             var snapshotPath = Path.Combine(LocalState.RuntimeDirectory(root), "development-mission.json");
@@ -162,11 +175,71 @@ public sealed class WorkbenchDevelopmentExecution(PlantHttp plant, WorkbenchBind
         File.Delete(path);
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    private async Task RetryAsync(CancellationToken cancellationToken)
+    {
+        var request = LocalState.Read<MissionRetryRequest>(MissionRetry.RequestPath(root));
+        var installation = LocalState.ReadInstallation(root);
+        MissionTelemetry? telemetry = null;
+        try
+        {
+            if (!Guid.TryParseExact(request.Id, "D", out _) || request.InstallationId != installation.InstallationId ||
+                request.ReleaseId != installation.ActiveRelease || current is null ||
+                File.Exists(Path.Combine(LocalState.RuntimeDirectory(root), "active-development-worker.json")))
+                throw new InvalidDataException("Explicit retry does not match the installed runtime or confirmed worker termination.");
+            if (File.Exists(MissionRetry.StatusPath(root)))
+            {
+                var previous = LocalState.Read<MissionRetryStatus>(MissionRetry.StatusPath(root));
+                if (previous.RequestId == request.Id)
+                {
+                    State = "notReady";
+                    Reason = "This explicit retry request was already handled. Reconcile its retained execution; no automatic replay.";
+                    Report("failed", Reason);
+                    return;
+                }
+            }
+            Report("processing", "Explicit retry received. Checking retained execution; this request will not be replayed after a host restart.");
+            var snapshot = WorkbenchMissionDiagnostics.ReadSnapshot(root);
+            telemetry = new MissionTelemetry(Path.Combine(MissionTelemetry.DirectoryPath(root),
+                $"mission-{snapshot.Mission.Id}-{request.Id}.jsonl"), snapshot.Mission.Id, snapshot.Mission.Digest, request.Id, "host",
+                model: snapshot.Mission.Model, releaseId: installation.ActiveRelease);
+            telemetry.Record("retry-request", "started");
+            var delivery = await plant.ReadAsync<DevelopmentMissionDelivery>(
+                $"v1/enrollments/{binding.EnrollmentId}/mission", cancellationToken);
+            if (request.MissionId != snapshot.Mission.Id || request.MissionDigest != snapshot.Mission.Digest ||
+                delivery.Mission.Id != request.MissionId || delivery.Mission.Digest != request.MissionDigest ||
+                delivery.State != "needsAttention" || delivery.PublicationPending || !WslMissionWorker.Matches(delivery.Mission, current))
+                throw new InvalidDataException("The frozen failed mission or its current authority changed; retry is refused.");
+            LocalState.Write(WorkbenchMissionDiagnostics.SnapshotPath(root), delivery);
+            worker = await WslMissionWorker.StartAsync(plant, binding, configuration, root, delivery, true, cancellationToken, retry: true);
+            State = "busy";
+            Reason = worker.Activity;
+            telemetry.Record("retry-request", "completed");
+            Report("started", "Explicit retry passed retained-state and Git integrity checks. Prior attempt and budget retained; mission telemetry is recording.");
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or
+            System.Text.Json.JsonException or ContractValidationException or InvalidOperationException or OperationCanceledException)
+        {
+            telemetry?.TryRecordFailure("retry-request", error);
+            State = "notReady";
+            Reason = "Explicit retry failed: " + MissionTelemetry.Safe(error.Message)[..Math.Min(200, MissionTelemetry.Safe(error.Message).Length)];
+            Report("failed", Reason);
+        }
+        finally
+        {
+            if (File.Exists(MissionRetry.RequestPath(root)) &&
+                LocalState.Read<MissionRetryRequest>(MissionRetry.RequestPath(root)).Id == request.Id)
+                File.Delete(MissionRetry.RequestPath(root));
+        }
+
+        void Report(string state, string detail) => LocalState.Write(MissionRetry.StatusPath(root),
+            new MissionRetryStatus(request.Id, installation.InstallationId, installation.ActiveRelease, state, detail));
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken, Exception? cause = null)
     {
         if (worker is null)
             return;
-        await worker.StopAsync(cancellationToken);
+        await worker.StopAsync(cancellationToken, cause);
         try { await worker.Completion; }
         catch (Exception error) when (error is IOException or OperationCanceledException)
         {

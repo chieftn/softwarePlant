@@ -10,15 +10,19 @@ namespace Factory.Tests;
 public sealed class CopilotMissionBoundaryTests
 {
 #pragma warning disable GHCP001
-    [Fact]
-    public async Task SdkTokenCallbackObtainsFreshMissionCredentialsWithoutAmbientFallback()
+    [Theory]
+    [InlineData("github.com")]
+    [InlineData("https://github.com")]
+    [InlineData("https://github.com/")]
+    [InlineData("https://GITHUB.COM")]
+    public async Task SdkTokenCallbackObtainsFreshMissionCredentialsWithoutAmbientFallback(string host)
     {
         var clock = new TestClock();
         var calls = 0;
         Task<ModelAccessCredential> Acquire(CancellationToken cancellationToken) => Task.FromResult(
             new ModelAccessCredential("github-copilot", "test-model", "ghu_fixture-" + ++calls, clock.Now.AddHours(8)));
-        var first = await CopilotModelAuthentication.TokenAsync("github.com", "test-model", Acquire, clock, CancellationToken.None);
-        var refreshed = await CopilotModelAuthentication.TokenAsync("github.com", "test-model", Acquire, clock, CancellationToken.None);
+        var first = await CopilotModelAuthentication.TokenAsync(host, "test-model", Acquire, clock, CancellationToken.None);
+        var refreshed = await CopilotModelAuthentication.TokenAsync(host, "test-model", Acquire, clock, CancellationToken.None);
         Assert.NotEqual(first.Token!.AccessToken, refreshed.Token!.AccessToken);
         Assert.Equal(28800, refreshed.Token.ExpiresIn);
         await Assert.ThrowsAsync<InvalidDataException>(() =>
@@ -28,6 +32,26 @@ public sealed class CopilotMissionBoundaryTests
             CopilotModelAuthentication.TokenAsync("github.com", "other-model", Acquire, clock, CancellationToken.None));
         await Assert.ThrowsAsync<IOException>(() => CopilotModelAuthentication.TokenAsync("github.com", "test-model",
             _ => throw new IOException("Fixture credentials unavailable."), clock, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("http://github.com")]
+    [InlineData("https://other.example")]
+    [InlineData("https://github.com.other.example")]
+    [InlineData("https://github.com@other.example")]
+    [InlineData("https://other.example@github.com")]
+    [InlineData("https://github.com:444")]
+    [InlineData("https://github.com/path")]
+    [InlineData("https://github.com?target=other.example")]
+    [InlineData("https://github.com#fragment")]
+    [InlineData("https://github.com./")]
+    public async Task SdkTokenCallbackRejectsNonPublicGithubOriginsBeforeAcquiringCredentials(string host)
+    {
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CopilotModelAuthentication.TokenAsync(host, "test-model",
+                _ => throw new InvalidOperationException("Rejected hosts must not acquire credentials."),
+                new TestClock(), CancellationToken.None));
     }
 #pragma warning restore GHCP001
 

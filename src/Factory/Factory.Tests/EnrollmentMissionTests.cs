@@ -16,6 +16,35 @@ namespace Factory.Tests;
 
 public sealed class EnrollmentMissionTests
 {
+    [Fact]
+    public async Task ExplicitFailedMissionRestartUsesExistingApiAndPreservesClaimAndBudget()
+    {
+        using var app = new MissionApplication();
+        var (enrollment, configuration) = await Assigned(app);
+        using var machine = app.Daemon();
+        var path = $"/v1/enrollments/{enrollment.Id}/mission";
+        var delivery = await Claim(machine, path, Request(configuration));
+        var failed = new DevelopmentMissionProgress(delivery.Mission.Id, delivery.Mission.Digest,
+            "needsAttention", 1, 5688, null, null, false, "Retained failure with telemetry.");
+        using var fault = await SendAsync(machine, HttpMethod.Put, path + "/progress", failed, Key());
+        fault.EnsureSuccessStatusCode();
+        using var stopped = await machine.PostAsJsonAsync(path + "/terminated", new MissionTerminationRequest(delivery.Mission.Id, true));
+        stopped.EnsureSuccessStatusCode();
+        using var retry = await SendAsync(machine, HttpMethod.Put, path + "/progress",
+            failed with { State = "executing", Reason = "Explicit retry; original budget preserved." }, Key());
+        retry.EnsureSuccessStatusCode();
+        using var credential = await machine.PostAsJsonAsync(path + "/model-credential",
+            new MissionModelCredentialRequest(delivery.Mission.Id, delivery.Mission.Digest));
+        credential.EnsureSuccessStatusCode();
+        var stored = Assert.Single(app.Store.All<DevelopmentMissionRecord>());
+        Assert.Equal(delivery.Mission.Id, stored.Mission.Id);
+        Assert.Equal(delivery.Mission.Digest, stored.Mission.Digest);
+        Assert.Equal(1, stored.Progress.Iterations);
+        Assert.Equal(5688, stored.Progress.ActiveMilliseconds);
+        Assert.False(stored.TerminationConfirmed);
+        Assert.Single(app.Store.All<DevelopmentIssueClaimRecord>());
+    }
+
     [Theory]
     [InlineData(null, true)]
     [InlineData(true, true)]

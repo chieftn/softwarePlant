@@ -1,8 +1,334 @@
 # Live Workbench Installation Test
 
-Last updated: November 17, 2026 (Pacific).
+Last updated: November 20, 2026 (Pacific).
 
-## Managed execution settings - current candidate 0.1.9
+## SDK token-provider host correction - current candidate 0.1.15
+
+The tester installed 0.1.14 and the 17:57 UTC retry got through host authorization,
+repository credentials, preparation and SDK startup. SDK session creation then
+failed in our token callback: `Copilot model credentials can only be used with
+github.com.` No `host-model-credential` request was emitted. This failure consumed
+implementation iteration 2; telemetry reports 11,657 total active milliseconds.
+No candidate commit, verification, Alignment or publication was demonstrated.
+
+The pinned SDK forwards the effective GitHub host unchanged; its runtime contract
+uses GitHub host URLs. Our callback compared that value only with the bare
+hostname. The new callback accepts only `github.com`, `https://github.com` and
+`https://github.com/`, case-insensitively. It still rejects HTTP, other hosts,
+spoofed suffixes, user-info, alternate ports, paths, query strings and fragments
+before requesting any credential. Token freshness/model validation and renewable
+Factory credentials are unchanged. The prior exception did not record the actual
+host argument; this fixes the demonstrated HTTPS-origin contract mismatch without
+claiming a successful live SDK session or recovering the original discarded error.
+
+The corrected unsigned MSI is:
+
+`C:\repos\softwarePlant\src\Factory\artifacts\installer\0.1.15-workbench-0.1.15-sdk-host-001\msi\en-US\Factory.Workbench.0.1.15.msi`
+
+| Candidate | Value |
+|---|---|
+| Runtime release | `workbench-0.1.15-sdk-host-001` |
+| Bytes | 351,043,920 |
+| SHA-256 | `2E938E5B2CE3DCAD50EF2B13B2C050CD6CC4D5963B50B08678C639D0D8970AC4` |
+| Source validation | 24 focused SDK boundary checks passed; the three HTTPS-origin cases failed before the fix. Scoped whitespace verification passed. |
+| Static evidence | All 812 embedded files/four cabinets, 527 runtime files and 297 Linux worker files matched; helper, production profile and pinned native payloads matched. |
+| Release evidence | `src\Factory\artifacts\installer\0.1.15-workbench-0.1.15-sdk-host-001\release-handoff.json` |
+
+Install **0.1.15 in place**, then **Stop line / Prepare SDK worker / Start line /
+Retry retained mission once / View mission telemetry**. After worker shutdown,
+**Save diagnostics**. Stop on any failed step; do not delete journals or reset the
+mission. Preparation is required because the correction is in the Linux worker.
+The same frozen mission retains iteration 2, consumed active time, deadline and
+configured limits. Retry does not restore consumed iterations.
+
+No Factory deployment, re-enrollment, new grants, shared-machine MSI/helper/
+service/WSL/SDK/model execution or source commit/push occurred. The actual
+dedicated-device 0.1.15 session/model/PR/merge result is not yet verified.
+ICE validation was skipped.
+
+## Confirmed retry-request permission fix - previous candidate 0.1.14
+
+The tester installed 0.1.13, prepared the worker and restored line consent.
+The explicit retry at 17:32:56 UTC passed integrity and recovered the incomplete
+earlier attempt, but again disconnected during host authorization before SDK
+startup. The local `runtime\runtime-failure.log` confirmed
+`UnauthorizedAccessException` deleting
+`C:\ProgramData\Factory\Workbench\mission-retry-request.json`
+in `WorkbenchDevelopmentExecution.RetryAsync` cleanup. The service has read-only
+access to installation-root files, but Modify access to `runtime`.
+The earlier cleanup-race fix did not address this separate permission defect.
+
+The corrected unsigned MSI is:
+
+`C:\repos\softwarePlant\src\Factory\artifacts\installer\0.1.14-workbench-0.1.14-retry-access-001\msi\en-US\Factory.Workbench.0.1.14.msi`
+
+| Candidate | Value |
+|---|---|
+| Runtime release | `workbench-0.1.14-retry-access-001` |
+| Bytes | 351,035,728 |
+| SHA-256 | `340BF5F4F627ECC2C55712751CDDF2EA8949A31C8B5F8852A14E8BD4C6657DF0` |
+| Source validation | 79 focused checks passed; GUI build had zero warnings/errors; scoped whitespace verification passed. A restricted-token Windows regression reproduced the actual denied delete before the fix and passed afterward. |
+| Static evidence | All 812 embedded files/four cabinets, 527 runtime files and 297 Linux worker files matched; helper, production profile and pinned native payloads matched. |
+| Release evidence | `src\Factory\artifacts\installer\0.1.14-workbench-0.1.14-retry-access-001\release-handoff.json` |
+
+Retry requests now live at `runtime\mission-retry-request.json`, where the
+existing service permissions permit consumption and cleanup. No permission is
+expanded. The legacy root request remains untouched as evidence and is not read
+or replayed by the new runtime. The restricted-token regression also verifies
+that installation.json still cannot be deleted and the legacy request survives.
+Fatal outer host exceptions now reach mission telemetry before owned execution
+is stopped, including failures outside the connection handler.
+
+Next steps:
+
+1. Install **0.1.14 in place**, without uninstalling or editing/deleting state.
+2. Open updated Workbench Setup and select **Stop line**; wait for completion.
+3. Select **Prepare SDK worker...**; wait for successful current-release preparation.
+4. Select **Start line...**.
+5. Select **Retry retained mission...** once and confirm.
+6. Select **View mission telemetry...**. Acceptance is not mission completion.
+7. After the worker stops, select **Save diagnostics...**.
+
+If a step fails, stop there and preserve the error and journals. No Factory
+deployment, re-enrollment or new grants are needed. No shared-machine MSI/helper,
+service, WSL, SDK or model execution occurred; the Windows regression uses only
+its own temporary files and a restricted current token. The actual dedicated
+device installation and mission execution remain unverified. The first mission's
+discarded IOException remains unknown; this fix addresses the confirmed retry
+cleanup crash, not demonstrated SDK/PR/merge success. ICE validation was skipped.
+
+## Telemetry directory and interrupted installer recovery - previous candidate 0.1.13
+
+The tester paused after a failed 0.1.12 installation. **Do not retry 0.1.12,
+uninstall, delete telemetry/journals, or edit installation.json.**
+
+Last confirmed dedicated-device state:
+
+| Item | State |
+|---|---|
+| Installation | `updating` |
+| Active release | `workbench-0.1.11-telemetry-001` |
+| Pending release | `workbench-0.1.12-retry-fix-001` |
+| Previous release | `workbench-0.1.10-diagnostics-002` |
+| Installer journal | `update`, original installed 0.1.11; transaction `{DCED133B-E96D-4B12-9888-76535AF719D7}` |
+| Mission | `b62b8397-074e-47d9-ad2a-ef1aeea03e8c`, issue 3; no verified SDK implementation, PR or merge |
+
+The telemetry release created `runtime\mission-telemetry`, but
+`MachineCertificates.GrantServiceStateAccess` rejected every runtime subdirectory.
+Initial activation failed at 06:56 UTC, restoration/rollback failed in that same
+access-control check, and a later MSI attempt failed the pending-maintenance
+guard. These are confirmed by the tester's logs and focused reproductions.
+The previous static package checks did not exercise this runtime directory layout.
+
+The corrected unsigned MSI is:
+
+`C:\repos\softwarePlant\src\Factory\artifacts\installer\0.1.13-workbench-0.1.13-installer-fix-001\msi\en-US\Factory.Workbench.0.1.13.msi`
+
+| Candidate | Value |
+|---|---|
+| Runtime release | `workbench-0.1.13-installer-fix-001` |
+| Bytes | 351,031,632 |
+| SHA-256 | `03439C38AE1B69DBDEBD24A53E19C7632A22E255D0CA389054CE53E5D8D8BAEC` |
+| Source validation | 78 focused checks passed; GUI build had zero warnings/errors; scoped whitespace verification passed. Two original failure reproductions failed before the fix. |
+| Static evidence | All 812 embedded files/four cabinets, 527 runtime files and 297 Linux worker files matched; embedded helper, production profile and pinned native payloads matched. |
+| Release evidence and saved next steps | `src\Factory\artifacts\installer\0.1.13-workbench-0.1.13-installer-fix-001\release-handoff.json` |
+
+The access-control guard now allows only flat regular runtime files and the
+owned flat `mission-telemetry` directory. It still rejects links, unexpected
+directories and nested telemetry directories, and applies the existing
+administrator/System/service access policy to the retained telemetry directory
+and files. No telemetry is deleted or moved.
+
+The new MSI uses the existing rollback operation to restore an unfinished,
+validated update journal before applying its own update. It refuses another
+installation's journal or ambiguous maintenance and honors an explicit stop.
+The failed release remains in the owned inventory; mission identity, frozen
+inputs, issue claim, old checkout, telemetry and limits are not reset or replayed.
+
+When the tester resumes:
+
+1. Copy and install **0.1.13 in place**. Its corrected helper handles the pending
+   software-update journal; do not run the old helper's Recover or retry 0.1.12.
+2. Open Workbench Setup and select **Stop line**. Preserve any unresolved journal.
+3. Select **Prepare SDK worker...** to install the current-release worker.
+4. Select **Start line...**.
+5. Select **Retry retained mission...** once and confirm.
+6. Select **View mission telemetry...**. Acceptance is not mission completion.
+7. After the worker stops, select **Save diagnostics...**.
+
+No Factory deployment, permission expansion, source commit/push or shared-machine
+MSI/helper/WSL/SDK/model execution occurred. Actual 0.1.13 installation on the
+dedicated device remains unverified; ICE validation was skipped, not passed.
+The original discarded mission error and end-to-end SDK/PR/merge acceptance
+remain unresolved.
+
+## Retry acknowledgement fix - failed dedicated-device candidate 0.1.12
+
+Install this unsigned MSI **in place**, without uninstalling:
+
+`C:\repos\softwarePlant\src\Factory\artifacts\installer\0.1.12-workbench-0.1.12-retry-fix-001\msi\en-US\Factory.Workbench.0.1.12.msi`
+
+| Candidate | Value |
+|---|---|
+| Runtime release | `workbench-0.1.12-retry-fix-001` |
+| Bytes | 350,990,672 |
+| SHA-256 | `D911F252E0A1BCCD2B79BD812E779B46887351D5098E7574D8056C8FC05BD53E` |
+| Static evidence | All 812 embedded files/four cabinets, 527 runtime files and 297 Linux worker files matched; embedded helper, production profile and pinned native payloads matched. |
+| Source validation | 71 focused checks passed; GUI build had zero warnings/errors; scoped whitespace verification passed. Two acknowledgement cases failed before the fix and passed afterward. |
+| Release evidence | `src\Factory\artifacts\installer\0.1.12-workbench-0.1.12-retry-fix-001\release-handoff.json` |
+
+The 0.1.11 live trace accepted the retry, then canceled the Windows worker pipe
+during authorization, before SDK startup. Setup and the service both deleted
+the same retry request. After Setup read the acknowledgement, its deletion
+could race the host's read-before-delete cleanup. The resulting `IOException`
+enters the host's connection-failure handler, which stops owned execution.
+The supplied trace did not retain that initiating exception; the reproduced
+cleanup race is a concrete matching defect, not proof of the original discarded
+mission error.
+
+In 0.1.12 the service alone owns request cleanup. Setup cannot replace a queued
+request. The service records receipt before beginning retry work and refuses to
+replay the same handled request after a restart. Canceling Setup's wait does not
+cancel an already queued operation; **Stop line** revokes local execution consent.
+Host-initiated error shutdown now records its causal exception in `host-stop`
+telemetry before canceling the pipe. The UI preserves the retry acceptance detail
+and explicitly distinguishes it from mission completion.
+
+The new checkout becomes the retained attempt only when preparation creates it,
+before any Git command. For the interrupted 0.1.11 attempt, the worker can use
+the original checkout only when the saved pre-attempt state and current counters
+match, bounded worker telemetry shows no preparation/implementation, and there
+are no other attempt directories. It then verifies the original HEAD, branch,
+origin and configuration before accepting retry. Ambiguous evidence is refused,
+not reset. Old state, telemetry, checkout, claim and remaining budget are retained.
+
+After installation:
+
+1. Select **Stop line**. If shutdown remains unresolved, preserve its journal.
+2. Select **Prepare SDK worker...** to install the corrected Linux worker.
+3. Select **Start line...** to restore local execution consent.
+4. Select **Retry retained mission...** once and confirm.
+5. Select **View mission telemetry...**. Retry acceptance is not mission completion.
+6. After the worker stops, select **Save diagnostics...**.
+
+No Factory deployment, new grants, source commit/push or shared-machine
+installation/WSL/SDK/model execution was performed. The dedicated-device result
+remains unverified; the original mission error remains unknown. ICE validation
+was skipped, not passed.
+
+## Durable mission telemetry and explicit retry - previous candidate 0.1.11
+
+Install this unsigned MSI **in place**, without uninstalling:
+
+`C:\repos\softwarePlant\src\Factory\artifacts\installer\0.1.11-workbench-0.1.11-telemetry-001\msi\en-US\Factory.Workbench.0.1.11.msi`
+
+| Candidate | Value |
+|---|---|
+| Runtime release | `workbench-0.1.11-telemetry-001` |
+| Bytes | 351,007,056 |
+| SHA-256 | `AB96B3CEFAA0A2C20D23CC2D451AE6016D59B9538BA2813048B5B203ED7F595B` |
+| Static evidence | All 812 embedded files/four cabinets, 527 runtime files and 297 Linux worker files matched sources/manifests; helper, production profile and pinned native payloads matched. |
+| Source validation | 71 focused checks passed, including the existing Factory API's failed-mission restart path. GUI build had zero warnings/errors; scoped whitespace verification passed. |
+| Release evidence | `src\Factory\artifacts\installer\0.1.11-workbench-0.1.11-telemetry-001\release-handoff.json` |
+
+After installation, open the updated Workbench Setup:
+
+1. Select **Stop line** first. Preparation deliberately refuses existing execution
+   consent or an unresolved worker journal. Stop line revokes consent and confirms
+   shutdown without deleting the retained mission. If shutdown is unresolved,
+   preserve its journal; do not force preparation.
+2. Select **Prepare SDK worker...** to install the instrumented Linux worker.
+   Preparation preserves the retained mission workspace and does not run a model.
+3. Select **Start line...** to restore local execution consent. The retained
+   `needsAttention` mission is not automatically replayed.
+4. Select **Retry retained mission...** and confirm the explicit retry.
+   Do not uninstall, delete journals or change the line to force another claim.
+5. Select **View mission telemetry...** for a read-only trace refreshing every
+   two seconds. It runs inside elevated Setup and does not depend on Explorer
+   having permission to read service-owned files.
+6. After the worker stops, select **Save diagnostics...**. The archive now includes
+   `mission-telemetry.jsonl` as well as `mission-diagnostics.json`.
+
+Telemetry is written and flushed during execution, both under the service-owned
+Windows runtime `runtime\mission-telemetry` directory and into the Linux retained
+mission's `mission-telemetry.jsonl`. It identifies the frozen mission, digest,
+worker instance, model and release; records stage starts/completions/failures and
+durations; preserves underlying exception messages, bounded source-location-free
+stacks, HTTP failure codes/correlation, SDK remote RPC codes, and command exit
+codes with redacted bounded error excerpts. No prompt, response transcript,
+credential response or arbitrary SDK error-data payload is captured. Known
+credential patterns are redacted before persistence/export. Files and collection
+are bounded and reject links or mismatched ownership.
+
+Retry is an explicit local operator action, not automatic recovery. The service
+must confirm prior worker termination and unchanged frozen authority; the worker
+requires `needsAttention` without a recorded candidate, alignment or publication.
+It verifies the previous checkout still has the owned source HEAD, branch, origin
+and configuration before cloning a fresh attempt. Previous state and checkout
+remain intact. The same issue claim, mission digest, deadline and remaining
+iteration/time budget are retained; retry does not create a replacement mission
+or reset limits. Commits or publication needing reconciliation are refused.
+
+No Factory deployment is required: restart progress and credentials use the
+existing mission API. The build did not install anything, run WSL/SDK/models,
+change permissions or rerun the mission on the shared machine. Dedicated-device
+upgrade, updated-worker preparation and instrumented retry remain to be accepted.
+The original discarded exception is still unavailable; this release captures
+the next attempt rather than claiming a demonstrated fix for the unknown failure.
+ICE validation was skipped, not passed.
+
+The initial 0.1.11 instructions omitted Stop line before preparation and Start
+line afterward. The tester encountered the existing preparation safety guard;
+the corrected sequence above uses the same installer without weakening that guard.
+
+## Retained-mission diagnostics - previous candidate 0.1.10
+
+The first owned worker launched on 0.1.9, then reported
+`Owned mission requires reconciliation (needsAttention); no automatic replay.`
+No draft PR or successful model/verification/alignment completion was verified.
+The user authorized a diagnostic-only increment, not a mission reset or retry.
+
+Upgrade **in place**, without uninstalling:
+
+`C:\repos\softwarePlant\src\Factory\artifacts\installer\diagnostics-0110-002\msi\en-US\Factory.Workbench.0.1.10.msi`
+
+| Candidate | Value |
+|---|---|
+| Runtime release | `workbench-0.1.10-diagnostics-002` |
+| Bytes | 350,921,040 |
+| SHA-256 | `7EB2DBCB1DC061AB30A929980FC18F1A05DBD56ACF92F1DB2EF362C35AF7965C` |
+| Static evidence | All 812 embedded files/four cabinets, 527 runtime files and 297 Linux worker files matched sources/manifests; helper, production profile, pinned Ubuntu/Copilot payloads and Linux x64 ELF headers matched. |
+| Source validation | 57 focused Release checks passed; receipt is `retained-mission-diagnostics.trx` in the session artifacts. Windows graphical setup built without warnings/errors; scoped whitespace verification passed. |
+| Release evidence | `src\Factory\artifacts\installer\diagnostics-0110-002\release-handoff.json` |
+
+For diagnosis, **do not select Prepare SDK worker or Start line**. Open the
+updated Setup application and select **Save diagnostics...**. It asks the existing
+service identity to read the retained mission state from the owned distribution,
+as the unprivileged Linux worker. It does not require installing the new payload
+into Linux or obtaining new GitHub/Copilot credentials.
+
+Setup shows the retained state, reason, implementation-pass count and active
+time. The archive includes `mission-diagnostics.json`: frozen mission identity,
+issue/repository, counters, candidate commit, verification exit codes/durations,
+alignment outcome and publication-pending flag. It excludes configuration,
+private keys/tokens, full agent sessions and raw logs. Collection failures are
+explicit; an active/unresolved worker is not stopped or interrupted by export.
+Linked, oversized or mismatched state is rejected.
+
+The collector preserves execution consent, enrollment, service run intent,
+mission claim and journals. An otherwise stopped service is started only for
+the diagnostic request and stopped afterward, without entering normal mission
+execution. Already-discarded error output cannot be recovered by this update.
+
+This candidate is unsigned; ICE validation was explicitly skipped, not passed.
+No MSI/helper, WSL, SDK/model execution, Factory deployment or permission change
+was performed on the shared build machine. Dedicated-device upgrade and
+service-identity diagnostic export remain to be accepted. Diagnose the retained
+boundary before authorizing any recovery or another model run.
+
+The previous release records below describe their earlier rollout state.
+
+## Managed execution settings - previous candidate 0.1.9
 
 November 17: the user authorized removing manual client execution configuration.
 Setup now includes **Start line...** / **Stop line**;

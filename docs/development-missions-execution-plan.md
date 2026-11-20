@@ -223,6 +223,58 @@ Graceful quiescing/draining, Foreman/task decomposition, automatic workbench sel
 
 The v1 contracts should not preclude later specialized agents or richer ring workflows, but those capabilities are not prerequisites for the first issue-to-PR path.
 
+## Technical Debt
+
+### Mission-specific verification - November 19, 2026
+
+**Status: open; recorded for follow-up, not authorized for implementation.**
+
+The worker currently executes verification commands frozen in the repository
+workload. The first-run setup in chieftn/productionOutput1#5 turns the initial
+package issue's acceptance criteria into a line-wide rule: every candidate must
+have a private package manifest without dependencies, devDependencies or scripts.
+That scaffold would reject later work that legitimately adds those fields.
+It is not the general verification contract we want.
+
+Replace issue-specific line-wide rules with bounded, mission-specific verification:
+Implementation proposes appropriate checks and adds relevant tests; the worker
+executes those checks against the exact candidate and records results; Alignment
+judges whether the checks and evidence actually demonstrate the frozen requirements.
+Keep stable repository build/test checks mandatory where appropriate.
+
+Independent verification remains required. Agents must not silently disable
+checks or declare their own work accepted. Define how a proposed verification
+plan is validated, bound to the candidate and retained with its evidence, while
+preserving existing execution permissions, budgets and stopping controls.
+This requires extending the current frozen-command contract, not merely changing
+agent instructions. No runtime, workload PR or execution authority is changed
+by recording this debt.
+
+### Separate infrastructure attempts from productive iterations - November 20, 2026
+
+**Status: open; recorded for follow-up, not authorized for implementation.**
+
+The worker increments the mission iteration counter immediately before invoking
+Implementation. SDK startup, session creation and credential-callback failures
+after that increment consume the same budget as a completed
+Implementation/verification/Alignment cycle or a human-requested revision.
+In the first live mission, the token-callback failure consumed iteration 2
+without producing code; iteration 3 produced the PR. Infrastructure failures
+therefore reduced the budget available for useful implementation and review.
+
+Define separate accounting for infrastructure attempts and productive
+implementation/revision iterations. Agree the evidence boundary for charging a
+productive iteration, how partially executed or failed model work is counted,
+and whether human-review revisions share that budget or have a separate limit.
+Do not treat every failed attempt as free: bound infrastructure retries, model
+usage and total active time, and persist the counters across restarts and retries.
+
+Preserve frozen authority, deadlines, ownership and uncertain-effect
+reconciliation. New accounting must not permit automatic replay of ambiguous
+execution/publication or unbounded retries. Existing missions retain their
+current counters and limits; recording this debt does not reset this mission's
+budget or change runtime behavior.
+
 ## Approval and Iteration Record
 
 Before implementation, agree the first iteration's bounded scope. Obtain separate approval for external repository writes, GitHub App/identity permissions, service deployment, test-machine installation, model calls, and live PR publication.

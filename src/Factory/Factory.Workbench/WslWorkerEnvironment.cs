@@ -19,14 +19,19 @@ public interface IWslCommands
     bool OwnsDistribution(string name, string directory);
 }
 
-public sealed class WslCommands : IWslCommands
+public sealed class WslCommands(int maximumOutputCharacters = 16 * 1024) : IWslCommands
 {
+    private readonly int outputLimit = maximumOutputCharacters is > 0 and <= MissionTelemetry.MaximumBytes
+        ? maximumOutputCharacters : throw new ArgumentOutOfRangeException(nameof(maximumOutputCharacters));
     public async Task<WslCommandResult> RunAsync(string[] arguments, Stream? input, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "wsl.exe"))
         {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
         };
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);
@@ -58,7 +63,7 @@ public sealed class WslCommands : IWslCommands
         }
     }
 
-    private static async Task<string> ReadAsync(StreamReader reader, CancellationToken cancellationToken)
+    private async Task<string> ReadAsync(StreamReader reader, CancellationToken cancellationToken)
     {
         var text = new StringBuilder();
         var buffer = new char[2048];
@@ -66,8 +71,8 @@ public sealed class WslCommands : IWslCommands
         while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
         {
             text.Append(buffer, 0, read);
-            if (text.Length > 16 * 1024)
-                text.Remove(0, text.Length - 16 * 1024);
+            if (text.Length > outputLimit)
+                text.Remove(0, text.Length - outputLimit);
         }
         return text.ToString().Replace("\0", "", StringComparison.Ordinal).Trim('\uFEFF', ' ', '\r', '\n');
     }
@@ -109,12 +114,18 @@ public sealed class WslWorkerEnvironment(string root, WorkbenchInstallation inst
     private string DistributionDirectory => Path.Combine(EnvironmentDirectory(root), "distribution");
     private string Name => DistributionName(installation.InstallationId);
 
-    public static bool IsReady(string root, WorkbenchConfiguration configuration, string release)
+    public void RequireOwnedRegistration()
+    {
+        ValidateMarker();
+        RequireRegistration();
+    }
+
+    public static bool IsReady(string root, WorkbenchConfiguration configuration, string release, int? processId = null)
     {
         if (!File.Exists(StatusPath(root)))
             return false;
         var status = LocalState.Read<WorkerSetupStatus>(StatusPath(root));
-        return status.State == "ready" && status.ProcessId == Environment.ProcessId &&
+        return status.State == "ready" && status.ProcessId == (processId ?? Environment.ProcessId) &&
             status.InstallationId == configuration.InstallationId && status.ReleaseId == release &&
             configuration.Distribution == DistributionName(configuration.InstallationId) &&
             configuration.LinuxUser == LinuxUser && configuration.LinuxWorkspaceRoot == Workspace &&

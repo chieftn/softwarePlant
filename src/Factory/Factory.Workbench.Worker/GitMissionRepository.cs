@@ -85,19 +85,23 @@ public sealed class WorkerCommandRunner
 }
 
 public sealed class GitMissionRepository(DevelopmentMission mission, string runDirectory,
-    string authorName, string authorEmail, IWorkerPlantGateway plant, WorkerCommandRunner commands) : IDevelopmentMissionRepository
+    string authorName, string authorEmail, IWorkerPlantGateway plant, WorkerCommandRunner commands,
+    MissionTelemetry? telemetry = null, Action? preparationStarted = null) : IDevelopmentMissionRepository
 {
     private readonly string checkout = Path.Combine(runDirectory, "repository");
     private readonly string hooks = Path.Combine(runDirectory, "empty-hooks");
     private readonly string configurationPath = Path.Combine(runDirectory, "git-config.digest");
     private string? configurationDigest;
     public string Checkout => checkout;
+    public Task AssertRetrySafeAsync(CancellationToken cancellationToken) =>
+        AssertOwnedAsync(mission.Workload.SourceCommit, cancellationToken);
 
     public async Task PrepareAsync(DevelopmentMission approved, CancellationToken cancellationToken)
     {
         if (Directory.Exists(checkout))
             throw new IOException("A checkout already exists; interrupted execution cannot overwrite or replay it.");
         Directory.CreateDirectory(checkout);
+        preparationStarted?.Invoke();
         Directory.CreateDirectory(hooks);
         await Git(["init", "--quiet"], cancellationToken);
         await Git(["remote", "add", "origin", Url], cancellationToken);
@@ -206,7 +210,16 @@ public sealed class GitMissionRepository(DevelopmentMission mission, string runD
         var directory = Path.GetFullPath(command.WorkingDirectory.Replace('/', Path.DirectorySeparatorChar), checkout);
         if (!MissionPermissionPolicy.Within(checkout, directory) || !Directory.Exists(directory))
             throw new IOException("Declared command working directory is missing or outside the contained checkout.");
-        return await commands.RunAsync(directory, command, null, cancellationToken);
+        telemetry?.Record("declared-command", "started");
+        var result = await commands.RunAsync(directory, command, null, cancellationToken);
+        if (result.ExitCode != 0)
+            telemetry?.TryRecordFailure("declared-command", new MissionOperationException("declared-command",
+                $"Declared {command.Executable} failed: {MissionTelemetry.Safe(string.IsNullOrWhiteSpace(result.Error) ? result.Output : result.Error)}",
+                exitCode: result.ExitCode),
+                durationMilliseconds: result.DurationMilliseconds);
+        else
+            telemetry?.Record("declared-command", "completed", durationMilliseconds: result.DurationMilliseconds);
+        return result;
     }
 
     private string Url => $"https://github.com/{mission.Workload.Configuration.ProductionLine!.Definition.Source.Repository}.git";
@@ -243,7 +256,9 @@ public sealed class GitMissionRepository(DevelopmentMission mission, string runD
         fixedArguments.AddRange(arguments);
         var result = await commands.RunAsync(checkout, new("git", fixedArguments.ToArray(), ".", 120), environment, cancellationToken);
         if (result.ExitCode != 0)
-            throw new IOException($"Owned Git operation failed with exit {result.ExitCode}; inspect redacted evidence before retrying.");
+            throw new MissionOperationException("git-" + arguments[0],
+                $"Owned Git {arguments[0]} failed (exit {result.ExitCode}): {MissionTelemetry.Safe(result.Error)}",
+                exitCode: result.ExitCode);
         return result;
     }
 }

@@ -353,3 +353,227 @@ model entitlement/renewal and complete workflow acceptance remain outstanding.
 Evidence: `src\Factory\artifacts\service\managed-execution-20261117-001`
 and `src\Factory\artifacts\installer\managed-019-001\release-handoff.json`.
 No source commit or push was requested/performed for this release.
+
+## First ignition and retained-mission diagnostics - November 19, 2026
+
+The tester installed/prepared 0.1.9, configured and enabled the line, assigned
+the plant binding and granted local Start line consent. The first-run verification
+setup in chieftn/productionOutput1#5 is merged; issue 3 has the `approved` label
+and package acceptance criteria. A stale task connection reference
+`github-productzero` was replaced with the connected managed integration.
+
+Setup then reported an owned Linux MAF/Copilot worker as busy. Fresh Factory
+presence subsequently reported `notReady` with
+`Owned mission requires reconciliation (needsAttention); no automatic replay.`
+This is a runtime/recovery state, not an LLM asking an interactive question.
+No draft PR or successful SDK/model/verification/alignment completion was verified.
+Preserve the claim and journals; do not restart or replay the mission blindly.
+
+Investigation found that the delivery/status path omits the saved failure reason,
+worker stderr is discarded, and the previous diagnostic archive excludes mission
+state. The user explicitly authorized read-only retained-state export under the
+service identity and a new MSI, without permission expansion, Factory deployment
+or mission recovery.
+
+Unsigned MSI `0.1.10` / `workbench-0.1.10-diagnostics-002` is built and statically
+verified. All 812 embedded files/four cabinets and both runtime inventories
+matched; 57 focused checks passed. The updated **Save diagnostics...** reads a
+bounded, identity-checked retained state, exports an allowlisted/redacted report,
+and displays state/reason/counters. It does not run agents, prepare the new Linux
+payload, change consent or release ownership. Already-discarded output remains
+unavailable. Dedicated-device installation/export and subsequent diagnosis are
+outstanding; recovery still requires separate authorization.
+
+See the [installation handoff](workbench-installation-test.md) for the exact MSI
+path/hash and diagnostic procedure. The first issue's fixed verification rule
+remains a scaffold; mission-specific verification/task-owned guidance is recorded
+as technical debt in the [execution plan](development-missions-execution-plan.md#technical-debt).
+
+### Authorized telemetry revision and explicit retry - November 19, 2026
+
+The dedicated-device 0.1.10 export succeeded: issue 3's mission
+`b62b8397-074e-47d9-ad2a-ef1aeea03e8c` was `needsAttention`, with one iteration,
+5,688 active milliseconds, no recorded candidate/verification/alignment and no
+publication intent. The stored reason was only `Mission boundary failed
+(IOException)`. Local fault injection showed that SDK/implementation,
+post-implementation authorization, commit and candidate-report failures can
+produce that same evidence. The SDK wraps remote RPC errors in `IOException`;
+the host and worker also discard HTTP failure detail/code. Historical Azure
+log reads yielded no usable matching request records. The actual cause remains
+unproven.
+
+The user explicitly requested revising telemetry so the mission can be rerun with
+proper evidence. Unsigned MSI 0.1.11 / `workbench-0.1.11-telemetry-001` is built
+and statically verified. It adds durable redacted worker/host telemetry, a live
+read-only Setup viewer, underlying error/RPC/HTTP/Git detail and diagnostic export.
+Its **Retry retained mission...** action is explicit, preserves the old attempt,
+uses a fresh checkout of the same frozen mission, retains the claim and remaining
+budget, and refuses unresolved commits/publication or changed ownership/authority.
+The existing Factory API restart path is covered by a focused test; no Factory
+deployment or new permission is needed.
+
+All 71 focused checks and the GUI build/scoped formatting passed. All 812 MSI
+files/four cabinets and runtime payload inventories matched. No shared-machine
+installation, WSL/SDK/model execution, source commit/push or live mission retry
+was performed. Dedicated-device upgrade, updated SDK-worker preparation and
+explicit instrumented retry are next. See the current
+[installation handoff](workbench-installation-test.md) for the exact artifact and
+procedure. This is instrumentation and a controlled retry, not proof that the
+unknown live failure has been fixed.
+
+### Retry acknowledgement shutdown fix - November 19, 2026
+
+The dedicated-device 0.1.11 retry passed retained-state integrity at 06:27:59 UTC,
+then the host worker pipe was canceled during authorization. The worker reported
+Windows host disconnection; no SDK startup or implementation was observed.
+Investigation found both Setup and the host deleting the shared retry request
+after acknowledgement. Two focused regression cases failed on that behavior.
+Its cleanup race can throw an `IOException` after accepting retry, causing the
+host's existing connection-failure handler to stop the worker. The supplied
+telemetry does not contain that initiating exception, so the exact live trigger
+is not independently confirmed.
+
+MSI 0.1.12 / `workbench-0.1.12-retry-fix-001` fixes this concrete defect with the
+host as sole request cleanup owner, refuses queued-request replacement and
+handled-request replay after restart, records the exception initiating host
+shutdown before pipe cancellation, and preserves the UI's retry acceptance
+detail. Attempt metadata now changes when preparation creates the new checkout,
+before any Git command, rather than before initial authorization. Recovery of
+the missing 0.1.11 checkout requires matching pre-attempt counters and bounded
+telemetry proving no preparation, no other attempt directories, and unchanged
+owned original Git state. Ambiguous effects still require reconciliation.
+
+The original frozen mission, claim, old checkout/state, limits and approval
+deadline are unchanged. All 71 focused checks passed, as did the GUI build and
+scoped formatting. All 812 embedded files/four cabinets and runtime inventories
+were statically verified. The exact MSI and corrected
+**Stop line / Prepare SDK worker / Start line / Retry / View telemetry** procedure
+are in the [installation handoff](workbench-installation-test.md).
+No Factory deployment, new grants, source commit/push or shared-machine runtime
+execution occurred. The next dedicated-device result is still needed; neither
+the original error nor end-to-end model/PR/merge success is established.
+
+### Confirmed installer regression and saved resumption state - November 19, 2026
+
+The 0.1.12 installer failed on the dedicated device. Error 1722 identified
+`ApplyRuntime`. Earlier setup logs showed failed activation at 06:56:19 UTC
+and failed rollback at 06:56:39 and 06:58:23 in
+`MachineCertificates.GrantServiceStateAccess`. The latest apply attempt stopped
+at `Installed()` because the earlier update was still pending.
+
+The confirmed regression was that telemetry introduced
+`runtime\mission-telemetry`, while the service-state ACL guard rejected every
+runtime subdirectory. Both update and rollback therefore rejected the telemetry
+layout. Static MSI payload verification and fake-service tests had not exercised
+that guard with existing mission telemetry.
+
+The user explicitly requested fixing the bug, rebuilding, and retaining the
+steps/status for later. The last supplied installation state is `updating`,
+active `workbench-0.1.11-telemetry-001`, pending
+`workbench-0.1.12-retry-fix-001`, previous 0.1.10, with run intent true.
+The journal is an `update` from installed 0.1.11, transaction
+`{DCED133B-E96D-4B12-9888-76535AF719D7}`. Mission
+`b62b8397-074e-47d9-ad2a-ef1aeea03e8c` remains unverified; its retry canceled
+during host authorization before SDK startup. Do not infer implementation,
+verification, PR or merge success from retry acceptance.
+
+MSI 0.1.13 / `workbench-0.1.13-installer-fix-001` is built and statically
+verified. Its guard permits only the owned flat telemetry directory and regular
+files, still rejects other directories/links, and preserves the existing private
+ACL policy and evidence. Its MSI apply path first uses the validated prior
+update journal's existing rollback operation to restore the old selection, then
+applies the new release; another installation's journal and ambiguous maintenance
+are refused, and explicit stop intent is preserved. No mission reset or replay
+is added. Lifecycle tests now invoke the same runtime-layout validator.
+
+Two failure reproductions failed before the fix; 78 focused checks passed
+afterward, with a clean GUI build/scoped formatting and all 812 embedded
+files/four cabinets verified. No shared-machine MSI/helper/service/WSL/SDK/model
+execution, Factory deployment, new grants or source commit/push occurred.
+The [installation handoff](workbench-installation-test.md) and 0.1.13
+`release-handoff.json` retain the exact artifact, last device state and next
+steps: install 0.1.13 in place, Stop line, Prepare SDK worker, Start line,
+explicit Retry, View telemetry, then Save diagnostics after shutdown.
+Do not retry 0.1.12 or delete/edit state. The dedicated-device installation
+and original mission outcome remain to be verified when the user resumes.
+
+### Confirmed retry cleanup permission failure - November 20, 2026
+
+The tester installed 0.1.13 and reached Start line and explicit retry.
+At 17:32:56 UTC the retry passed integrity and recovered the unprepared earlier
+attempt, but immediately disconnected during host authorization, before SDK
+startup. The local crash log supplied by the tester at 17:34:44 UTC confirmed
+`UnauthorizedAccessException` deleting the installation-root
+`mission-retry-request.json` in `RetryAsync` cleanup. The service only has Read
+access there. The fatal exception bypassed the inner connection handler, so
+the previous `host-stop` instrumentation did not capture it. The earlier
+cleanup-race diagnosis/fix was incomplete; it did not solve this permission defect.
+
+MSI 0.1.14 / `workbench-0.1.14-retry-access-001` moves the shared retry
+request into the existing service-writable runtime directory, without expanding
+permissions. The old root request is retained as evidence, not migrated or
+automatically replayed. A restricted-current-token Windows test reproduces
+the actual denied deletion before the change, then passes afterward while
+installation.json remains protected and the old request remains intact. Fatal
+outer host exceptions are now passed into stop telemetry before pipe cancellation.
+
+All 79 focused checks passed; GUI build/scoped whitespace verification passed.
+All 812 embedded MSI files/four cabinets, 527 runtime and 297 Linux worker files
+were statically verified. No shared-machine MSI/helper/service/WSL/SDK/model
+execution, permission expansion, Factory deployment or source commit/push occurred.
+The [installation handoff](workbench-installation-test.md) and current release
+handoff save the exact artifact and next steps: install 0.1.14 in place,
+Stop line, Prepare SDK worker, Start line, Retry once, View telemetry, then
+Save diagnostics after the worker stops. Actual dedicated-device 0.1.14
+installation, SDK implementation and PR/merge completion are not yet established.
+
+### SDK reached; token callback host mismatch - November 20, 2026
+
+The dedicated-device 0.1.14 retry at 17:57 UTC passed authorization, credentials,
+preparation and SDK startup. It reached SDK session creation, then our
+`CopilotModelAuthentication.TokenAsync` rejected the callback host before any
+Factory model-credential request: `Copilot model credentials can only be used
+with github.com.` The resulting SDK RPC error is -32603. Iteration 2 was consumed;
+the trace reports 11,657 total active milliseconds. This proves progress beyond
+the prior cleanup crash, not model completion or a candidate commit.
+
+The pinned SDK forwards its effective GitHub host to the callback unchanged;
+its runtime contract uses host URLs. Our bare-host comparison rejected HTTPS
+origins. MSI 0.1.15 / `workbench-0.1.15-sdk-host-001` accepts only the bare
+`github.com` and exact HTTPS origin with optional final slash, case-insensitively.
+It still rejects other hosts, HTTP, user-info, alternate ports, paths, query or
+fragment before acquiring credentials. Model/expiry validation and Factory's
+renewable credential flow are unchanged. The telemetry did not record the actual
+callback string, so the exact live string is not independently known.
+
+The three HTTPS-origin cases failed before the fix; all 24 focused SDK boundary
+checks passed afterward. The package build and scoped formatting passed, and all
+812 embedded files/four cabinets and runtime/native payloads were statically
+verified. No shared-machine SDK/model/WSL/MSI/helper/service execution, Factory
+deployment, grant change or source commit/push occurred. The exact artifact and
+saved steps are in the [installation handoff](workbench-installation-test.md):
+install 0.1.15 in place, Stop line, Prepare SDK worker, Start line, Retry once,
+View telemetry, then Save diagnostics after shutdown. Preserve iteration 2 and
+all original frozen limits; do not reset consumed budget. The live session/model
+result, original discarded error, candidate/PR/merge remain unverified.
+
+### First live mission PR merged - November 20, 2026
+
+The 0.1.15 dedicated-device run reached iteration 3, committed a candidate,
+completed declared verification and candidate integrity, and entered Alignment.
+The user then reported the generated PR and its merge. Read-only GitHub checks
+confirmed [chieftn/productionOutput1#6](https://github.com/chieftn/productionOutput1/pull/6)
+(`Package File Missing`) merged at 18:27:45 UTC, merge commit
+`93282eab33e208609553e9701e97596f1a58eee3`. Its branch
+`factory/mission-b62b8397-074e-47d9-ad2a-ef1aeea03e8c` identifies the retained
+mission; candidate HEAD was `248c3f1b7fc408e6b4597ff7d9568f781633b6df`.
+GitHub returned no closing issue references, so issue auto-closure is not
+established.
+
+This confirms the first live mission produced a PR that was merged. Factory's
+observation of merged completion and confirmed worker termination remain to be
+observed separately; a GitHub merge alone does not establish those final gates.
+Leave the running service to perform its normal review/termination reporting;
+do not retry the mission. Infrastructure-versus-productive iteration accounting
+was recorded separately in the execution plan's Technical Debt section, without
+changing this mission's counters or runtime behavior.

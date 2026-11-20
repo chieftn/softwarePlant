@@ -45,6 +45,7 @@ internal static class WorkerProgram
                 Console.WriteLine(JsonSerializer.Serialize(message, RepositoryWorkload.Json));
         }
 
+        MissionTelemetry? telemetry = null;
         try
         {
             if (!OperatingSystem.IsLinux())
@@ -62,7 +63,7 @@ internal static class WorkerProgram
                 return confirmed ? 0 : 1;
             }
             if (args.Length is not (7 or 8) || args[0] != "run" || args[1] != "--workspace-root" ||
-                args[3] != "--instance" || args[5] != "--nonce" || args.Length == 8 && args[7] != "--resume" ||
+                args[3] != "--instance" || args[5] != "--nonce" || args.Length == 8 && args[7] is not ("--resume" or "--retry") ||
                 !Guid.TryParseExact(args[4], "D", out _) || args[6].Length != 64 || !args[6].All(char.IsAsciiHexDigit))
                 throw new InvalidDataException("Invalid owned worker invocation.");
             var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(args[2]));
@@ -76,6 +77,7 @@ internal static class WorkerProgram
             request.Validate();
             var run = Path.Combine(root, request.Mission.Id);
             var statePath = Path.Combine(run, "mission-state.json");
+            var retry = args.Length == 8 && args[7] == "--retry";
             var resume = args.Length == 8;
             if (Directory.Exists(run) != resume)
                 throw new IOException("Existing execution state requires explicit reconciliation/resume; new work cannot overwrite it.");
@@ -85,6 +87,11 @@ internal static class WorkerProgram
             using var runLock = LocalState.Lock(run, "worker.lock");
             var ownedProcess = OwnedLinuxProcess.Register(run, request.Mission.Id, args[4], args[6]);
             Emit(new("started", args[4], "owned-process", JsonSerializer.SerializeToElement(ownedProcess, RepositoryWorkload.Json)));
+            telemetry = new MissionTelemetry(Path.Combine(run, "mission-telemetry.jsonl"), request.Mission.Id,
+                request.Mission.Digest, args[4], "worker", entry =>
+                    Emit(new("telemetry", request.Mission.Id, "mission-telemetry", JsonSerializer.SerializeToElement(entry, RepositoryWorkload.Json))),
+                model: request.Model, releaseId: Environment.GetEnvironmentVariable("FACTORY_WORKBENCH_RELEASE_ID"));
+            telemetry.Record("worker", "started");
             using var lifetime = new CancellationTokenSource();
             using var termination = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; lifetime.Cancel(); });
             var plant = new WorkerPlantPipe(Emit);
@@ -106,18 +113,38 @@ internal static class WorkerProgram
                     await lifetime.CancelAsync();
                 }
             });
-            var repository = new GitMissionRepository(request.Mission, run, request.GitAuthorName, request.GitAuthorEmail, plant, new());
-            var agent = new CopilotMissionAgent(repository.Checkout, Path.Combine(run, "sessions"), request.Model,
-                cancellationToken => plant.ModelCredentialAsync(request.Mission, cancellationToken), request.Enabled);
+            var state = resume ? LocalState.Read<DevelopmentMissionState>(statePath, 512 * 1024) : DevelopmentMissionState.Claimed(request.Mission);
+            if (state.Mission.Digest != request.Mission.Digest)
+                throw new InvalidDataException("Resume request cannot replace frozen mission inputs.");
+            var attemptDirectory = MissionRetry.AttemptDirectory(run);
+            if (retry)
+            {
+                telemetry.Record("retry-integrity", "started", state.Iterations);
+                var next = MissionRetry.Prepare(state, request.Mission);
+                var retainedDirectory = MissionRetry.RetainedAttemptDirectory(run, state);
+                var incompleteAttempt = retainedDirectory != attemptDirectory;
+                attemptDirectory = retainedDirectory;
+                var previous = new GitMissionRepository(request.Mission, attemptDirectory, request.GitAuthorName,
+                    request.GitAuthorEmail, plant, new(), telemetry);
+                await previous.AssertRetrySafeAsync(lifetime.Token);
+                if (incompleteAttempt)
+                    telemetry.Record("retry-incomplete-attempt", "completed", state.Iterations);
+                LocalState.Write(Path.Combine(run, $"mission-state-before-{args[4]}.json"), state, 512 * 1024);
+                attemptDirectory = Path.Combine(run, "attempts", args[4]);
+                state = next;
+                telemetry.Record("retry-integrity", "completed", state.Iterations);
+                Emit(new("retry-ready", request.Mission.Id, "retry-integrity", JsonSerializer.SerializeToElement(new { accepted = true })));
+            }
+            var repository = new GitMissionRepository(request.Mission, attemptDirectory, request.GitAuthorName, request.GitAuthorEmail, plant, new(), telemetry,
+                retry ? () => LocalState.Write(Path.Combine(run, "attempt.json"), new MissionAttempt(args[4])) : null);
+            var agent = new CopilotMissionAgent(repository.Checkout, Path.Combine(attemptDirectory, "sessions"), request.Model,
+                cancellationToken => plant.ModelCredentialAsync(request.Mission, cancellationToken), request.Enabled, telemetry);
             var runner = new DevelopmentMissionRunner(repository, agent, async (current, cancellationToken) =>
             {
                 LocalState.Write(statePath, current, 512 * 1024);
                 await plant.ReportAsync(new(current.Mission.Id, current.Mission.Digest, current.State, current.Iterations,
                     current.ActiveMilliseconds, current.CandidateCommit, current.PullRequest, current.PublicationPending, current.Reason), cancellationToken);
-            }, plant.AuthorizeAsync, request.Reviewers, TimeProvider.System);
-            var state = resume ? LocalState.Read<DevelopmentMissionState>(statePath, 512 * 1024) : DevelopmentMissionState.Claimed(request.Mission);
-            if (state.Mission.Digest != request.Mission.Digest)
-                throw new InvalidDataException("Resume request cannot replace frozen mission inputs.");
+            }, plant.AuthorizeAsync, request.Reviewers, TimeProvider.System, telemetry);
             if (resume && state.PublicationPending && state.State is "publishing" or "needsAttention")
                 state = await runner.ReconcilePublicationAsync(state, lifetime.Token);
             while (!lifetime.IsCancellationRequested)
@@ -128,16 +155,18 @@ internal static class WorkerProgram
                 await Task.Delay(TimeSpan.FromSeconds(15), lifetime.Token);
             }
             Emit(new("result", request.Mission.Id, state.State, JsonSerializer.SerializeToElement(new { state.State, state.Reason })));
+            telemetry.Record("worker", "completed", state.Iterations, state.ActiveMilliseconds);
             return state.State == "completed" ? 0 : 1;
         }
         catch (Exception error)
         {
+            telemetry?.TryRecordFailure("worker", error);
             if (args is ["check", "--workspace-root", _])
             {
                 Console.Error.WriteLine($"Worker readiness failed: {error.GetType().Name}: {error.Message}");
                 return 1;
             }
-            Console.Error.WriteLine($"Worker stopped: {error.GetType().Name}. Reconcile owned execution and publication before retrying.");
+            Console.Error.WriteLine($"Worker stopped: {error.GetType().Name}: {MissionTelemetry.Safe(error.Message)}. Reconcile owned execution and publication before retrying.");
             return 1;
         }
     }

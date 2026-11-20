@@ -21,7 +21,11 @@ public sealed class WslMissionWorker : IDisposable
     private readonly CancellationTokenSource requests = new();
     private readonly SemaphoreSlim termination = new(1, 1);
     private readonly TaskCompletionSource<OwnedLinuxWorker> started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource retryReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool retryRequested;
     private WslWorkerJournal journal;
+    private readonly MissionTelemetry telemetry;
+    public string Activity => telemetry.Activity;
     public DevelopmentMission Mission { get; }
     public Task Completion { get; private set; } = Task.CompletedTask;
     public bool TerminationConfirmed { get; private set; }
@@ -36,9 +40,12 @@ public sealed class WslMissionWorker : IDisposable
         Mission = mission;
         this.journal = journal;
         this.process = process;
+        telemetry = new MissionTelemetry(Path.Combine(MissionTelemetry.DirectoryPath(root),
+            $"mission-{mission.Id}-{journal.InstanceId}.jsonl"), mission.Id, mission.Digest, journal.InstanceId, "host",
+            model: mission.Model, releaseId: LocalState.ReadInstallation(root).ActiveRelease);
     }
 
-    public static ProcessStartInfo Invocation(WorkbenchConfiguration configuration, string instance, string nonce, bool resume)
+    public static ProcessStartInfo Invocation(WorkbenchConfiguration configuration, string instance, string nonce, bool resume, bool retry = false)
     {
         var start = new ProcessStartInfo("wsl.exe")
         {
@@ -54,7 +61,9 @@ public sealed class WslMissionWorker : IDisposable
             "--exec", "/usr/bin/setsid", "--wait", "--", configuration.Development!.WorkerExecutable,
             "run", "--workspace-root", configuration.LinuxWorkspaceRoot, "--instance", instance, "--nonce", nonce })
             start.ArgumentList.Add(argument);
-        if (resume)
+        if (retry)
+            start.ArgumentList.Add("--retry");
+        else if (resume)
             start.ArgumentList.Add("--resume");
         start.Environment.Remove("FACTORY_WORKBENCH_COPILOT_TOKEN");
         return start;
@@ -62,7 +71,7 @@ public sealed class WslMissionWorker : IDisposable
 
     public static async Task<WslMissionWorker> StartAsync(PlantHttp plant, WorkbenchBinding binding,
         WorkbenchConfiguration configuration, string root, DevelopmentMissionDelivery delivery,
-        bool resume, CancellationToken cancellationToken)
+        bool resume, CancellationToken cancellationToken, bool retry = false)
     {
         configuration.Validate();
         if (configuration.Development?.Enabled != true)
@@ -74,17 +83,31 @@ public sealed class WslMissionWorker : IDisposable
         var journal = new WslWorkerJournal(delivery.Mission.Id, delivery.Mission.Digest, Guid.NewGuid().ToString("D"),
             Convert.ToHexString(RandomNumberGenerator.GetBytes(32)), null, configuration.Distribution,
             configuration.LinuxUser, configuration.LinuxWorkspaceRoot, configuration.Development.WorkerExecutable);
-        var process = new Process { StartInfo = Invocation(configuration, journal.InstanceId, journal.Nonce, resume) };
+        var process = new Process { StartInfo = Invocation(configuration, journal.InstanceId, journal.Nonce, resume, retry) };
+        process.StartInfo.Environment["FACTORY_WORKBENCH_RELEASE_ID"] = LocalState.ReadInstallation(root).ActiveRelease;
         var worker = new WslMissionWorker(plant, binding, configuration, root, delivery.Mission, journal, process);
+        worker.retryRequested = retry;
         LocalState.Write(worker.JournalPath, journal);
-        if (!process.Start())
-            throw new IOException("Service-owned WSL worker did not start.");
+        worker.telemetry.Record("wsl-start", "started");
+        try
+        {
+            if (!process.Start())
+                throw new IOException("Service-owned WSL worker did not start.");
+        }
+        catch (Exception error)
+        {
+            worker.telemetry.TryRecordFailure("wsl-start", error);
+            worker.Dispose();
+            throw;
+        }
         worker.Completion = worker.ReadAsync();
         try
         {
             await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, RepositoryWorkload.Json).AsMemory(), cancellationToken);
             await process.StandardInput.FlushAsync(cancellationToken);
             await worker.started.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+            if (retry)
+                await worker.retryReady.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
             return worker;
         }
         catch
@@ -95,9 +118,11 @@ public sealed class WslMissionWorker : IDisposable
         }
     }
 
-    public bool Matches(WorkbenchLineConfiguration current)
+    public bool Matches(WorkbenchLineConfiguration current) => Matches(Mission, current);
+
+    public static bool Matches(DevelopmentMission mission, WorkbenchLineConfiguration current)
     {
-        var original = Mission.Workload.Configuration;
+        var original = mission.Workload.Configuration;
         var definition = current.ProductionLine?.Definition;
         return current.PlantId == original.PlantId && current.AssignmentVersion == original.AssignmentVersion &&
             current.BindingVersion == original.BindingVersion && current.ProductionLine?.Id == original.ProductionLine!.Id &&
@@ -142,17 +167,31 @@ public sealed class WslMissionWorker : IDisposable
                         throw new InvalidDataException("Unowned worker cannot request plant operations.");
                     await RespondAsync(message);
                 }
+                else if (message.Type == "telemetry")
+                {
+                    if (journal.Process is null || message.Id != Mission.Id || message.Operation != "mission-telemetry")
+                        throw new InvalidDataException("Unowned worker telemetry cannot be recorded.");
+                    var entry = message.Payload.Deserialize<MissionTelemetryEntry>(RepositoryWorkload.Json)
+                        ?? throw new InvalidDataException("Worker telemetry is empty.");
+                    telemetry.Append(entry);
+                }
+                else if (retryRequested && journal.Process is not null && message.Type == "retry-ready" &&
+                    message.Id == Mission.Id && message.Operation == "retry-integrity")
+                    retryReady.TrySetResult();
                 else if (message.Type != "result" || message.Id != Mission.Id)
                     throw new InvalidDataException("Unrecognized worker pipe message.");
             }
             await process.WaitForExitAsync(CancellationToken.None);
             if (!started.Task.IsCompleted)
                 started.TrySetException(new IOException("Worker exited before proving process ownership."));
+            if (retryRequested && !retryReady.Task.IsCompleted)
+                retryReady.TrySetException(new IOException("Worker exited before accepting the explicit retry; inspect mission telemetry."));
             if (process.ExitCode != 0)
                 throw new IOException("Owned worker exited without merged completion; reconcile retained state.");
         }
-        catch
+        catch (Exception error)
         {
+            telemetry.TryRecordFailure("worker-pipe", error);
             try
             {
                 await ConfirmTerminationAsync();
@@ -165,6 +204,8 @@ public sealed class WslMissionWorker : IDisposable
                     await process.WaitForExitAsync(CancellationToken.None);
                 }
                 started.TrySetException(new IOException("Worker protocol failed before a usable ownership handshake."));
+                if (retryRequested)
+                    retryReady.TrySetException(new IOException("Worker protocol failed before explicit retry acceptance; inspect mission telemetry."));
             }
             throw;
         }
@@ -176,8 +217,8 @@ public sealed class WslMissionWorker : IDisposable
 
     private async Task DrainErrorsAsync()
     {
-        while (await process.StandardError.ReadLineAsync() is not null)
-            Console.Error.WriteLine("Owned Linux worker reported a diagnostic; inspect redacted mission state.");
+        while (await process.StandardError.ReadLineAsync() is { } line)
+            telemetry.TryRecordFailure("worker-stderr", new IOException(MissionTelemetry.Safe(line)));
     }
 
     private async Task RespondAsync(WorkerPipeMessage message)
@@ -185,6 +226,7 @@ public sealed class WslMissionWorker : IDisposable
         JsonElement payload;
         try
         {
+            telemetry.Record("host-" + message.Operation, "started");
             switch (message.Operation)
             {
                 case "authorize":
@@ -234,13 +276,15 @@ public sealed class WslMissionWorker : IDisposable
                     throw new InvalidDataException("Unsupported worker operation cannot widen plant authority.");
             }
             await Reply(new("response", message.Id, message.Operation, payload));
+            telemetry.Record("host-" + message.Operation, "completed");
         }
         catch (Exception error) when (error is IOException or HttpRequestException or JsonException or ContractValidationException)
         {
+            telemetry.TryRecordFailure("host-" + message.Operation, error);
             await Reply(new("error", message.Id, message.Operation, JsonSerializer.SerializeToElement(new
-            {
-                code = error is PlantConnectionException rejection ? rejection.Code ?? "plant_rejected" : "worker_boundary_failed"
-            })));
+                WorkerOperationFailure(error is PlantConnectionException rejection ? rejection.Code ?? "plant_rejected" : "worker_boundary_failed",
+                    MissionTelemetry.Safe(error.Message), error is PlantConnectionException http ? (int)http.Status : null,
+                    (error as PlantConnectionException)?.CorrelationId), RepositoryWorkload.Json)));
         }
     }
 
@@ -250,8 +294,10 @@ public sealed class WslMissionWorker : IDisposable
         await process.StandardInput.FlushAsync(requests.Token);
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken, Exception? cause = null)
     {
+        if (cause is not null)
+            telemetry.TryRecordFailure("host-stop", cause);
         await requests.CancelAsync();
         process.StandardInput.Close();
         try

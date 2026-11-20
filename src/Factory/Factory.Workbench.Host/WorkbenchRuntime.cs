@@ -17,6 +17,9 @@ public static class WorkbenchRuntime
         if (configuration.InstallationId != installation.InstallationId)
             throw new InvalidDataException("Configuration and installed machine identities do not match.");
         var environment = new WslWorkerEnvironment(root, installation, new WslCommands());
+        string? processedDiagnosticRequest = null;
+        if (await ProcessMissionDiagnostics())
+            return;
         var requestPath = WslWorkerEnvironment.RequestPath(root);
         string? processedWorkerRequest = null;
         if (File.Exists(requestPath))
@@ -44,12 +47,15 @@ public static class WorkbenchRuntime
         HttpClient? http = null;
         WorkbenchPlantConnection? connection = null;
         WorkbenchDevelopmentExecution? development = null;
+        Exception? shutdownCause = null;
         try
         {
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 BindingStore.RequireEnrollmentAllowed(root);
+                if (await ProcessMissionDiagnostics())
+                    return;
                 if (File.Exists(requestPath))
                 {
                     var request = LocalState.Read<WorkerSetupRequest>(requestPath);
@@ -96,7 +102,7 @@ public static class WorkbenchRuntime
                         error is TaskCanceledException && !cancellationToken.IsCancellationRequested)
                     {
                         if (development is not null)
-                            await development.StopAsync(CancellationToken.None);
+                            await development.StopAsync(CancellationToken.None, error);
                         status = status with
                         {
                             PlantConnected = false,
@@ -126,12 +132,17 @@ public static class WorkbenchRuntime
                 Reason = "Host stopped; any owned Linux execution was terminated and journals retained."
             });
         }
+        catch (Exception error)
+        {
+            shutdownCause = error;
+            throw;
+        }
         finally
         {
             try
             {
                 if (development is not null)
-                    await development.StopAsync(CancellationToken.None);
+                    await development.StopAsync(CancellationToken.None, shutdownCause);
             }
             finally
             {
@@ -143,13 +154,7 @@ public static class WorkbenchRuntime
 
         async Task ProcessWorkerSetup(WorkerSetupRequest request)
         {
-            if (!OperatingSystem.IsWindows() || diagnostic)
-                throw new InvalidOperationException("Worker setup requires the dedicated Windows service, not a diagnostic host.");
-            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-            var expectedIdentity = new System.Security.Principal.NTAccount(installation.ServiceAccount)
-                .Translate(typeof(System.Security.Principal.SecurityIdentifier));
-            if (identity.User is null || !identity.User.Equals(expectedIdentity))
-                throw new InvalidOperationException("Worker setup must run under the dedicated workbench service identity.");
+            RequireServiceIdentity("Worker setup");
             try { await environment.ProcessAsync(request, cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -163,6 +168,45 @@ public static class WorkbenchRuntime
                 else
                     Console.Error.WriteLine($"Worker setup failed: {error.Message}. See worker-setup.json.");
             }
+        }
+
+        async Task<bool> ProcessMissionDiagnostics()
+        {
+            var path = WorkbenchMissionDiagnostics.RequestPath(root);
+            if (!File.Exists(path))
+                return false;
+            var request = LocalState.Read<MissionDiagnosticRequest>(path);
+            if (request.Id == processedDiagnosticRequest)
+                return false;
+            var previous = File.Exists(WorkbenchMissionDiagnostics.StatusPath(root))
+                ? LocalState.Read<MissionDiagnosticStatus>(WorkbenchMissionDiagnostics.StatusPath(root)) : null;
+            processedDiagnosticRequest = request.Id;
+            if (previous?.RequestId == request.Id && previous.State is "collected" or "failed")
+                return false;
+            RequireServiceIdentity("Retained-mission diagnostics");
+            try
+            {
+                await new WorkbenchMissionDiagnostics(root, installation,
+                    new WslCommands(MissionTelemetry.MaximumBytes)).ProcessAsync(request, cancellationToken);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or
+                System.Text.Json.JsonException or Factory.Contracts.ContractValidationException or ArgumentException or OperationCanceledException)
+            {
+                logger?.LogWarning("Retained-mission diagnostics failed ({ErrorType}); the diagnostic result is retained. No mission was replayed.",
+                    error.GetType().Name);
+            }
+            return request.DiagnosticOnly;
+        }
+
+        void RequireServiceIdentity(string operation)
+        {
+            if (!OperatingSystem.IsWindows() || diagnostic)
+                throw new InvalidOperationException($"{operation} requires the dedicated Windows service, not a diagnostic host.");
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var expectedIdentity = new System.Security.Principal.NTAccount(installation.ServiceAccount)
+                .Translate(typeof(System.Security.Principal.SecurityIdentifier));
+            if (identity.User is null || !identity.User.Equals(expectedIdentity))
+                throw new InvalidOperationException($"{operation} must run under the dedicated workbench service identity.");
         }
     }
 }

@@ -10,7 +10,7 @@ namespace Factory.Workbench.Worker;
 
 public sealed class CopilotMissionAgent(string workspace, string sessionRoot, string model,
     Func<CancellationToken, Task<ModelAccessCredential>> acquireCredential,
-    bool executionEnabled) : IDevelopmentMissionAgent
+    bool executionEnabled, MissionTelemetry? telemetry = null) : IDevelopmentMissionAgent
 {
     public async Task ImplementAsync(DevelopmentMission mission, CandidateAlignment? previousAlignment,
         DevelopmentReviewFeedback[] feedback, CancellationToken cancellationToken)
@@ -74,13 +74,37 @@ public sealed class CopilotMissionAgent(string workspace, string sessionRoot, st
                 ["COPILOT_GITHUB_TELEMETRY_DISABLED"] = "true"
             }
         });
-        await client.StartAsync(cancellationToken);
+        telemetry?.Record("sdk-start", "started");
+        try
+        {
+            await client.StartAsync(cancellationToken);
+            telemetry?.Record("sdk-start", "completed");
+        }
+        catch (Exception error)
+        {
+            telemetry?.TryRecordFailure("sdk-start", error);
+            throw Wrap("sdk-start", error);
+        }
         var configuration = new SessionConfig
         {
             Model = model,
 #pragma warning disable GHCP001
-            GitHubTokenProvider = args => CopilotModelAuthentication.TokenAsync(args.Host, model, acquireCredential,
-                TimeProvider.System, cancellationToken),
+            GitHubTokenProvider = async args =>
+            {
+                telemetry?.Record("model-credential", "started");
+                try
+                {
+                    var token = await CopilotModelAuthentication.TokenAsync(args.Host, model, acquireCredential,
+                        TimeProvider.System, cancellationToken);
+                    telemetry?.Record("model-credential", "completed");
+                    return token;
+                }
+                catch (Exception error)
+                {
+                    telemetry?.TryRecordFailure("model-credential", error);
+                    throw;
+                }
+            },
 #pragma warning restore GHCP001
             WorkingDirectory = workspace,
             EnableFileHooks = false,
@@ -88,6 +112,8 @@ public sealed class CopilotMissionAgent(string workspace, string sessionRoot, st
             OnPermissionRequest = (permission, _) =>
             {
                 var allowed = MissionPermissionPolicy.Allows(permission, workspace, role == "implementation");
+                if (!allowed)
+                    telemetry?.Record("permission", "denied");
 #pragma warning disable GHCP001
                 return Task.FromResult(allowed ? PermissionDecision.ApproveOnce() :
                     PermissionDecision.Reject("Factory permits only this role's contained file access. Shell, network and other permissions are denied."));
@@ -112,15 +138,37 @@ public sealed class CopilotMissionAgent(string workspace, string sessionRoot, st
                 "Implement the frozen criteria and accepted corrections; end with a factual summary.")}
             """;
         var response = new StringBuilder();
-        await foreach (var update in agent.RunStreamingAsync(prompt, cancellationToken: cancellationToken))
+        telemetry?.Record("sdk-session", "started");
+        var received = false;
+        try
         {
-            var text = update.ToString();
-            if (text.Length + response.Length > 128 * 1024)
-                throw new InvalidDataException("Agent response exceeds the mission output bound.");
-            response.Append(text);
+            await foreach (var update in agent.RunStreamingAsync(prompt, cancellationToken: cancellationToken))
+            {
+                if (!received)
+                {
+                    received = true;
+                    telemetry?.Record("sdk-response", "received");
+                }
+                var text = update.ToString();
+                if (text.Length + response.Length > 128 * 1024)
+                    throw new InvalidDataException("Agent response exceeds the mission output bound.");
+                response.Append(text);
+            }
+            telemetry?.Record("sdk-session", "completed");
+        }
+        catch (Exception error)
+        {
+            var failure = Wrap("sdk-session", error);
+            telemetry?.TryRecordFailure("sdk-session", failure);
+            throw failure;
         }
         return response.ToString();
     }
+
+    private static Exception Wrap(string stage, Exception error) => error is IOException
+        ? new MissionOperationException(stage, error.Message, error,
+            rpcCode: (error.InnerException as RemoteRpcException)?.ErrorCode)
+        : error;
 }
 
 public static class MissionPermissionPolicy

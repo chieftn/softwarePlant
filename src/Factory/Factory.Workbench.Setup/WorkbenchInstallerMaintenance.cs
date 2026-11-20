@@ -12,6 +12,17 @@ public sealed partial class WorkbenchLifecycle
         using var maintenance = LocalState.Lock(root, "maintenance.lock");
         if (!File.Exists(Path.Combine(root, "installation.json")) || LocalState.ReadInstallation(root).State == "uninstalled")
             return;
+        var pending = LocalState.ReadInstallation(root);
+        if (pending.State == "updating" && File.Exists(InstallerJournal))
+        {
+            BindingStore.RequireEnrollmentAllowed(root);
+            var interrupted = LocalState.Read<InstallerMaintenance>(InstallerJournal);
+            ReadInstaller(interrupted.TransactionId);
+            if (interrupted.Operation != "update" || interrupted.Original.State != "installed" ||
+                pending.ActiveRelease != interrupted.Original.ActiveRelease)
+                throw new InvalidDataException("Pending maintenance is not an interrupted update of the original active release. Reconcile it before installing.");
+            await RollbackInstallerCoreAsync(interrupted.TransactionId, cancellationToken, preserveCurrentStop: true);
+        }
         var original = Installed();
         BindingStore.RequireEnrollmentAllowed(root);
         VerifyConfiguration(original);
@@ -58,7 +69,7 @@ public sealed partial class WorkbenchLifecycle
         await RollbackInstallerCoreAsync(transaction, cancellationToken);
     }
 
-    private async Task RollbackInstallerCoreAsync(string transaction, CancellationToken cancellationToken)
+    private async Task RollbackInstallerCoreAsync(string transaction, CancellationToken cancellationToken, bool preserveCurrentStop = false)
     {
         if (!File.Exists(InstallerJournal))
             return;
@@ -71,7 +82,8 @@ public sealed partial class WorkbenchLifecycle
         var restored = journal.Original with
         {
             OwnedReleases = journal.Original.OwnedReleases.Union(current.OwnedReleases, StringComparer.OrdinalIgnoreCase).ToArray(),
-            RunRequested = journal.Original.RunRequested && !File.Exists(Path.Combine(root, "removal-intent.json"))
+            RunRequested = journal.Original.RunRequested && (!preserveCurrentStop || current.RunRequested) &&
+                !File.Exists(Path.Combine(root, "removal-intent.json"))
         };
         using (LocalState.LockRuntime(root))
         {

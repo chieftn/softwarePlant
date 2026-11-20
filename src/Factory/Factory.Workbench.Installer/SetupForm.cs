@@ -68,8 +68,20 @@ internal sealed class SetupForm : Form
         startLine.Click += async (_, _) => await Run(StartLineAsync, "line-start");
         actions.Controls.Add(startLine);
         AddAction("Stop line", () => new WorkbenchExecutionSetup(root, service).StopAsync(lifetime.Token));
+        var retryMission = new Button { Text = "Retry retained mission...", AutoSize = true };
+        retryMission.Click += async (_, _) => await Run(RetryMissionAsync, "mission-retry");
+        actions.Controls.Add(retryMission);
         layout.Controls.Add(actions);
-        layout.Controls.Add(DiagnosticControls.Create(this, diagnostics));
+        layout.Controls.Add(DiagnosticControls.Create(this, diagnostics, collectMissionDiagnostics: async () =>
+        {
+            status.Text = "Collecting retained mission diagnostics as the workbench service identity. No mission will be retried.";
+            var collected = await new WorkbenchMissionDiagnosticSetup(root, service).CollectAsync(lifetime.Token);
+            status.Text = collected?.Mission is { } mission
+                ? $"Retained mission: {mission.State}; implementation passes: {mission.Iterations}; active time: {mission.ActiveMilliseconds / 1000}s.\n{mission.Reason}"
+                : collected is null ? "No retained mission snapshot exists; exporting setup diagnostics only."
+                : $"Retained mission diagnostics: {collected.State}.\n{collected.Detail}";
+            return collected;
+        }));
         layout.Controls.Add(status);
         Controls.Add(layout);
         signIn.Click += async (_, _) => await Run(SignInAsync, "sign-in");
@@ -293,6 +305,22 @@ internal sealed class SetupForm : Form
             "Factory supplies short-lived credentials for authorized missions. Use Stop line to revoke local execution permission.";
     }
 
+    private async Task RetryMissionAsync()
+    {
+        var snapshot = WorkbenchMissionDiagnostics.ReadSnapshot(root);
+        if (MessageBox.Show(this,
+            $"Retry frozen mission {snapshot.Mission.Id} for {snapshot.Mission.Issue.Repository}#{snapshot.Mission.Issue.Number}?\n\n" +
+            "The service must confirm prior worker termination. Retry is refused if candidate commits, publication effects, " +
+            "changed Git ownership, authority or exhausted limits require reconciliation.\n\n" +
+            "The old checkout and state are preserved. A fresh checkout uses the same frozen mission and remaining budget. " +
+            "This explicitly permits another model attempt, verification and draft PR publication. Durable mission telemetry will record stage and error details.",
+            "Explicit mission retry", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+        status.Text = "Requesting explicit retained-mission retry; checking ownership and recording telemetry...";
+        var result = await new WorkbenchMissionRetrySetup(root, service).RequestAsync(lifetime.Token);
+        status.Text = result.Detail + "\nRetry accepted, not mission completion. Use View mission telemetry for the live trace, then Save diagnostics after the worker stops.";
+    }
+
     private async Task<WorkbenchRuntimeStatus> WaitForConnectionAsync(DateTimeOffset started)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
@@ -348,9 +376,12 @@ internal sealed class SetupForm : Form
         catch (OperationCanceledException)
         {
             var logged = diagnostics.TryRecordFailure(stage, "cancelled");
-            status.Text = stage == "line-start"
-                ? "Line startup verification was interrupted. Local consent may already be saved; use Stop line to revoke it. Machine identity and journals are retained."
-                : "Software installed; enrollment/connection verification incomplete or cancelled. Progress is retained. Resume setup; do not delete identity or journals.";
+            status.Text = stage switch
+            {
+                "line-start" => "Line startup verification was interrupted. Local consent may already be saved; use Stop line to revoke it. Machine identity and journals are retained.",
+                "mission-retry" => "Waiting for retry acknowledgement was interrupted. The request may still be queued or running; inspect mission telemetry. Do not submit another retry or delete its request. Stop line revokes execution consent.",
+                _ => "Software installed; enrollment/connection verification incomplete or cancelled. Progress is retained. Resume setup; do not delete identity or journals."
+            };
             if (!logged)
                 status.Text += "\nThe diagnostic log could not be written. Check directory access and the MSI log.";
         }

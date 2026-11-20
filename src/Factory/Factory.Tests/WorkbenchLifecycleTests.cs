@@ -264,6 +264,68 @@ public sealed class WorkbenchLifecycleTests : IDisposable
         Assert.Equal("first", LocalState.ReadInstallation(Root).ActiveRelease);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NewMsiRecoversFailedActivationAndRollbackBeforeApplyingItsOwnUpdate(bool stopRequested)
+    {
+        await Install();
+        await Lifecycle.StartAsync(CancellationToken.None);
+        var mission = DevelopmentMissionTests.Mission();
+        LocalState.Write(WorkbenchMissionDiagnostics.SnapshotPath(Root), new DevelopmentMissionDelivery(mission, "needsAttention", ["reviewer"]));
+        var telemetry = MissionTelemetry.DirectoryPath(Root);
+        Directory.CreateDirectory(telemetry);
+        var evidence = Path.Combine(telemetry, "mission-evidence.jsonl");
+        File.WriteAllText(evidence, "retained mission evidence");
+        var identity = ConfigurationStore.Read(Root).InstallationId;
+        var failedTransaction = Guid.NewGuid().ToString("D");
+        service.ConfigureFailures = 2;
+        await Assert.ThrowsAsync<AggregateException>(() =>
+            Lifecycle.ApplyInstallerUpdateAsync(failedTransaction, Package("second"), CancellationToken.None));
+        service.ConfigureFailures = 1;
+        await Assert.ThrowsAsync<IOException>(() => Lifecycle.RollbackInstallerAsync(failedTransaction, CancellationToken.None));
+        Assert.Equal("updating", LocalState.ReadInstallation(Root).State);
+        if (stopRequested)
+            await Lifecycle.StopAsync(CancellationToken.None);
+
+        var nextTransaction = Guid.NewGuid().ToString("D");
+        await Lifecycle.ApplyInstallerUpdateAsync(nextTransaction, Package("third"), CancellationToken.None);
+        await Lifecycle.CommitInstallerAsync(nextTransaction, CancellationToken.None);
+
+        var installed = LocalState.ReadInstallation(Root);
+        Assert.Equal("installed", installed.State);
+        Assert.Equal("third", installed.ActiveRelease);
+        Assert.Null(installed.PendingRelease);
+        Assert.Equal("first", installed.PreviousRelease);
+        Assert.Equal(identity, installed.InstallationId);
+        Assert.Equal(!stopRequested, installed.RunRequested);
+        Assert.Equal(!stopRequested, service.Running);
+        Assert.False(File.Exists(Path.Combine(Root, "installer-transaction.json")));
+        Assert.Equal("retained mission evidence", File.ReadAllText(evidence));
+        Assert.Equal(mission.Digest, WorkbenchMissionDiagnostics.ReadSnapshot(Root).Mission.Digest);
+        Assert.Equal("needsAttention", WorkbenchMissionDiagnostics.ReadSnapshot(Root).State);
+    }
+
+    [Fact]
+    public async Task InstallerRecoveryRefusesAnInterruptedJournalFromAnotherInstallation()
+    {
+        await Install();
+        var original = LocalState.ReadInstallation(Root);
+        var pending = original with { State = "updating", PendingRelease = "second" };
+        LocalState.SaveInstallation(Root, pending);
+        var retained = File.ReadAllText(Path.Combine(Root, "installation.json"));
+        LocalState.Write(Path.Combine(Root, "installer-transaction.json"),
+            new InstallerMaintenance(Guid.NewGuid().ToString("D"), "update",
+                original with { InstallationId = Guid.NewGuid().ToString("D") }));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Lifecycle.ApplyInstallerUpdateAsync(Guid.NewGuid().ToString("D"), Package("third"), CancellationToken.None));
+
+        Assert.Equal(retained, File.ReadAllText(Path.Combine(Root, "installation.json")));
+        Assert.Equal("first", service.SelectedRelease);
+        Assert.True(File.Exists(Path.Combine(Root, "installer-transaction.json")));
+    }
+
     [Fact]
     public async Task InstallerUpdateRollbackAndRetryPreserveIdentityAndPriorRunIntent()
     {
@@ -566,6 +628,8 @@ public sealed class WorkbenchLifecycleTests : IDisposable
 
         public Task ConfigureAsync(string stateDirectory, WorkbenchInstallation installation, CancellationToken cancellationToken)
         {
+            if (OperatingSystem.IsWindows())
+                MachineCertificates.ValidateServiceRuntimeState(stateDirectory);
             if (ConfigureFailures-- > 0)
                 throw new IOException("Synthetic service configuration failure.");
             SelectedRelease = installation.PendingRelease ?? installation.ActiveRelease;

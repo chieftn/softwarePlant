@@ -26,7 +26,8 @@ public interface IDevelopmentMissionAgent
 
 public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repository, IDevelopmentMissionAgent agents,
     Func<DevelopmentMissionState, CancellationToken, Task> persist,
-    Func<DevelopmentMission, CancellationToken, Task> authorize, string[] reviewers, TimeProvider clock)
+    Func<DevelopmentMission, CancellationToken, Task> authorize, string[] reviewers, TimeProvider clock,
+    MissionTelemetry? telemetry = null)
 {
     public async Task<DevelopmentMissionState> AdvanceAsync(DevelopmentMissionState state, CancellationToken cancellationToken)
     {
@@ -124,36 +125,42 @@ public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repos
         var started = Stopwatch.GetTimestamp();
         var previousActiveMilliseconds = state.ActiveMilliseconds;
         var monitoring = MonitorAuthorizationAsync();
+        var stage = "preparation";
         try
         {
             if (originalState == "claimed")
-                await repository.PrepareAsync(state.Mission, deadline.Token);
+                await Run("preparation", () => repository.PrepareAsync(state.Mission, deadline.Token));
             while (state.Iterations < maximumIterations)
             {
-                await authorize(state.Mission, deadline.Token);
+                await Run("implementation-authorize", () => authorize(state.Mission, deadline.Token));
+                stage = "iteration-report";
                 state = await Save(state with { Iterations = state.Iterations + 1 });
-                await agents.ImplementAsync(state.Mission, state.Alignment, state.PendingFeedback, deadline.Token);
-                await authorize(state.Mission, deadline.Token);
-                var candidate = await repository.CommitAsync(state.Mission, state.CandidateCommit, deadline.Token);
+                await Run("implementation", () => agents.ImplementAsync(state.Mission, state.Alignment, state.PendingFeedback, deadline.Token));
+                await Run("candidate-authorize", () => authorize(state.Mission, deadline.Token));
+                var candidate = await RunValue("commit", () => repository.CommitAsync(state.Mission, state.CandidateCommit, deadline.Token));
                 RepositoryWorkload.Commit(candidate);
+                stage = "candidate-report";
                 state = await Save(state with { CandidateCommit = candidate, Verification = [], Alignment = null });
-                var evidence = await repository.VerifyAsync(state.Mission, candidate, deadline.Token);
+                var evidence = await RunValue("verification", () => repository.VerifyAsync(state.Mission, candidate, deadline.Token));
+                stage = "verification-report";
                 state = await Save(state with { Verification = evidence });
                 if (evidence.Length != workload.Verification.Commands.Length ||
                     evidence.Where((item, index) => item.CandidateCommit != candidate || item.ExitCode != 0 ||
                         !CommandsEqual(item.Command, workload.Verification.Commands[index])).Any())
                     return await Finish("blocked", "Independent verification failed or did not cover the declared checks.");
-                await repository.AssertCandidateAsync(candidate, deadline.Token);
-                await authorize(state.Mission, deadline.Token);
-                var alignment = await agents.AlignAsync(state.Mission, candidate, evidence, deadline.Token);
+                await Run("candidate-integrity", () => repository.AssertCandidateAsync(candidate, deadline.Token));
+                await Run("alignment-authorize", () => authorize(state.Mission, deadline.Token));
+                var alignment = await RunValue("alignment", () => agents.AlignAsync(state.Mission, candidate, evidence, deadline.Token));
                 alignment.Validate(state.Mission, candidate);
-                await repository.AssertCandidateAsync(candidate, deadline.Token);
+                await Run("candidate-integrity", () => repository.AssertCandidateAsync(candidate, deadline.Token));
+                stage = "alignment-report";
                 state = await Save(state with { Verification = evidence, Alignment = alignment });
                 if (alignment.Outcome == "blocked")
                     return await Finish("blocked", "Alignment reported unresolved blockers.");
                 if (alignment.Outcome == "revise")
                     continue;
-                await authorize(state.Mission, deadline.Token);
+                await Run("publication-authorize", () => authorize(state.Mission, deadline.Token));
+                stage = "publication-intent-report";
                 state = await Save(state with
                 {
                     State = "publishing",
@@ -161,7 +168,7 @@ public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repos
                     ActiveMilliseconds = ElapsedActiveMilliseconds(),
                     Reason = "Publication intent recorded; uncertain effects require read-back."
                 });
-                var published = await repository.PublishAsync(state.Mission, candidate, state.PullRequest, deadline.Token);
+                var published = await RunValue("publication", () => repository.PublishAsync(state.Mission, candidate, state.PullRequest, deadline.Token));
                 ValidatePublication(state.Mission, candidate, published, state.PullRequest);
                 state = state with { PullRequest = published, PendingFeedback = [], PublicationPending = false };
                 return await Finish("awaitingApproval", "Verified and aligned candidate published. Awaiting trusted human review; no SDK session is retained.");
@@ -170,11 +177,15 @@ public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repos
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
+            telemetry?.TryRecordFailure(stage, new OperationCanceledException("Execution deadline, contact or authorization cancellation."),
+                state.Iterations, ElapsedActiveMilliseconds());
             return await Finish("needsAttention", "Execution cancelled, contact lost or authorization revoked. Confirm owned-process termination and publication state before release.");
         }
         catch (Exception error) when (error is IOException or ContractValidationException or System.Text.Json.JsonException)
         {
-            return await Finish("needsAttention", $"Mission boundary failed ({error.GetType().Name}). Reconcile evidence and effects; do not replay.");
+            telemetry?.TryRecordFailure(stage, error, state.Iterations, ElapsedActiveMilliseconds());
+            var failedStage = error is MissionOperationException operation ? operation.Stage : stage;
+            return await Finish("needsAttention", $"Mission boundary failed at {failedStage} ({error.GetType().Name}). See mission telemetry; reconcile evidence and effects before retry.");
         }
         finally
         {
@@ -183,6 +194,31 @@ public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repos
         }
 
         long ElapsedActiveMilliseconds() => checked(previousActiveMilliseconds + (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+
+        async Task Run(string name, Func<Task> action)
+        {
+            await RunValue(name, async () => { await action(); return true; });
+        }
+
+        async Task<T> RunValue<T>(string name, Func<Task<T>> action)
+        {
+            stage = name;
+            telemetry?.Record(name, "started", state.Iterations);
+            var operationStarted = Stopwatch.GetTimestamp();
+            try
+            {
+                var result = await action();
+                telemetry?.Record(name, "completed", state.Iterations,
+                    (long)Stopwatch.GetElapsedTime(operationStarted).TotalMilliseconds);
+                return result;
+            }
+            catch (Exception error)
+            {
+                telemetry?.TryRecordFailure(name, error, state.Iterations,
+                    (long)Stopwatch.GetElapsedTime(operationStarted).TotalMilliseconds);
+                throw;
+            }
+        }
 
         async Task MonitorAuthorizationAsync()
         {
@@ -199,6 +235,8 @@ public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repos
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or HttpRequestException or
                 OperationCanceledException or TimeoutException)
             {
+                if (!deadline.IsCancellationRequested)
+                    telemetry?.TryRecordFailure("authorization-monitor", error, state.Iterations);
                 await deadline.CancelAsync();
             }
         }

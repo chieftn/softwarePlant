@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Factory.Contracts;
+using Factory.Workbench;
 
 namespace Factory.Workbench.Worker;
 
@@ -16,7 +17,22 @@ public sealed class WorkerPlantPipe(Action<WorkerPipeMessage> emit) : IWorkerPla
         if (response.Type == "response")
             completion.SetResult(response.Payload);
         else if (response.Type == "error")
-            completion.SetException(new IOException("Plant rejected the owned worker operation."));
+        {
+            try
+            {
+                var failure = response.Payload.Deserialize<WorkerOperationFailure>(RepositoryWorkload.Json)
+                    ?? throw new InvalidDataException("Worker operation failure details are missing.");
+                if (failure.Message is null || failure.Message.Length > 2048 ||
+                    failure.Code is null || !System.Text.RegularExpressions.Regex.IsMatch(failure.Code, @"\A[A-Za-z0-9_-]{1,128}\z"))
+                    throw new InvalidDataException("Worker operation failure details are invalid.");
+                completion.SetException(new MissionOperationException(response.Operation, MissionTelemetry.Safe(failure.Message),
+                    code: failure.Code, httpStatus: failure.HttpStatus, correlationId: failure.CorrelationId));
+            }
+            catch (Exception error) when (error is JsonException or InvalidDataException)
+            {
+                completion.SetException(new InvalidDataException("Worker operation failure details could not be validated.", error));
+            }
+        }
         else
             completion.SetException(new InvalidDataException("Invalid plant response type."));
     }
