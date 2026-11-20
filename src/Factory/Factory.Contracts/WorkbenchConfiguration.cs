@@ -15,6 +15,8 @@ public sealed record WorkbenchConfiguration
     public required bool AllowShellExecution { get; init; }
     public required bool AllowPublication { get; init; }
     public WorkbenchDevelopmentConfiguration? Development { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public WorkbenchExecutionConsent? ExecutionConsent { get; init; }
 
     public void Validate()
     {
@@ -60,6 +62,7 @@ public sealed record WorkbenchConfiguration
             ContractValidation.Require(AllowShellExecution && AllowPublication && AllowedRepositories.Length > 0,
                 "Development execution requires explicit local shell/publication permissions and repository allowlist.");
         }
+        ExecutionConsent?.Validate();
     }
 
     private static void Identifier(string? value, string name) =>
@@ -67,9 +70,31 @@ public sealed record WorkbenchConfiguration
             $"{name} must be a nonempty UUID.");
 }
 
+public sealed record WorkbenchExecutionConsent(string PlantId, long AssignmentVersion, long BindingVersion,
+    string ProductionLineId, string SourceRepository, string TaskRepository)
+{
+    public static WorkbenchExecutionConsent From(WorkbenchLineConfiguration configuration) => new(
+        configuration.PlantId ?? throw new ContractValidationException("A plant assignment is required."),
+        configuration.AssignmentVersion, configuration.BindingVersion,
+        configuration.ProductionLine?.Id ?? throw new ContractValidationException("A production line is required."),
+        configuration.ProductionLine.Definition.Source.Repository, configuration.ProductionLine.Definition.Tasks.Repository);
+
+    public bool Matches(WorkbenchLineConfiguration configuration) => configuration.ProductionLine is not null &&
+        this == From(configuration);
+
+    public void Validate() => ContractValidation.Require(
+        Guid.TryParseExact(PlantId, "D", out var plant) && plant != Guid.Empty &&
+        Guid.TryParseExact(ProductionLineId, "D", out var line) && line != Guid.Empty &&
+        AssignmentVersion > 0 && BindingVersion > 0 &&
+        !string.IsNullOrWhiteSpace(SourceRepository) && !string.IsNullOrWhiteSpace(TaskRepository),
+        "Local execution consent must identify the assigned plant, line, membership and repositories.");
+}
+
 public sealed record WorkbenchDevelopmentConfiguration
 {
     public bool Enabled { get; init; }
+    // Retained for existing installation JSON; queue selection is owned by the plant.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public long AssignedIssueNumber { get; init; }
     public string WorkerExecutable { get; init; } = "";
     public string Model { get; init; } = "";
@@ -78,7 +103,6 @@ public sealed record WorkbenchDevelopmentConfiguration
 
     public void Validate()
     {
-        ContractValidation.Require(AssignedIssueNumber > 0, "Specify the explicitly assigned GitHub issue number.");
         ContractValidation.Text(WorkerExecutable, 1024, "workerExecutable");
         ContractValidation.Require(WorkerExecutable.StartsWith('/') && WorkerExecutable != "/" &&
             !WorkerExecutable.Contains('\\') && !WorkerExecutable.Any(char.IsControl) &&

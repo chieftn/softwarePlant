@@ -226,3 +226,69 @@ No commit or PR was created for these softwarePlant changes. The previously
 opened workload PR remains the only published increment. Next approved work
 should settle the activation gates above, not switch the enable flags and assume
 that credentials, project checks, packaging or containment have been proved.
+
+## November 17 continuation: retooling gap and release authorization
+
+This dated continuation supersedes the earlier log's historical deployment,
+installer and authentication status; use the current
+[context](development-missions-context.md), [security architecture](security-architecture.md)
+and [installer handoff](workbench-installation-test.md) for the latest evidence.
+Do not treat the original morning-review table as a live inventory.
+
+The user asked to continue exploring **retooling** rather than change the current
+permission model. The gap is an authorized, observable transition between the
+desired line assignment and a workbench actually prepared to run it. It must
+cover stopping/reconciling old work, approving target configuration/permissions,
+changing tools/configuration/credentials, proving readiness and handling partial
+failure. Current assignment, local consent and preparation/stop controls remain
+separate pieces, not a completed retooling operation.
+
+Fleet-scale options discussed: central durable delegation; independent remote
+administration of device-side grants; and short-lived approvals for specific
+add/remove/retool changes whose results can persist. None is implemented or
+approved for implementation. Factory must not implicitly gain the independent
+administrator's authority. Existing local consent does not freeze all future
+line/repository content, and WSL is not a proven hostile-code sandbox.
+
+The user authorized documenting this gap, deploying the current updated Factory
+service and building a matching MSI while they are away. Preserve production
+settings, identities, networking, authentication and grants. Leave execution off;
+do not install or run the worker/WSL on the shared build machine. Keep local
+Start/Stop and assignment-scoped consent, and record verified release outcomes
+in a further dated entry. Source changes remain uncommitted unless separately
+authorized.
+
+### Verified release outcome - November 17, 2026
+
+Completed the three requested tasks without changing the execution/consent
+design:
+
+- Recorded the retooling gap in architecture, execution plan, context, these
+  progress notes and the security architecture. Options remain exploration,
+  not implementation commitments.
+- Deployed the updated existing Factory service as
+  `cfca26c6-d010-41a7-8d52-9f9e5ff4f279` (RuntimeSuccessful). The self-contained
+  Linux package's 387 entries matched the publish tree. Production settings,
+  authentication, both identities, networking and vault grants were preserved;
+  anonymous HTTP/OIDC/API challenges passed.
+- Built and statically verified unsigned MSI `0.1.9`,
+  `workbench-0.1.9-managed-001`: 350,880,080 bytes, SHA-256
+  `44AF45FD3F40CF4BA718524DF3B495199171B4A3C7661D3D3D77940D47FBB24D`.
+  All 812 embedded files, four cabinets and 527 runtime files (297 Linux worker
+  files) matched; the production profile/helper/pinned payloads matched.
+  The focused Release receipt records 155 passed cases.
+
+The MSI is at
+`src\Factory\artifacts\installer\managed-019-001\msi\en-US\Factory.Workbench.0.1.9.msi`.
+Service evidence is under
+`src\Factory\artifacts\service\managed-execution-20261117-001`;
+the installer directory contains its separate `release-handoff.json`.
+ICE validation was explicitly skipped. No installer/helper/WSL/SDK/model ran on
+the shared build machine. No grants, execution settings, line configurations,
+local consent, product repository or source commits were changed/created.
+
+Remaining acceptance is the dedicated-machine in-place upgrade/preparation,
+real project verification and eligible issues, separately approved local
+activation and a real model/mission/merge/next-claim run. The new package retains
+local controls; it does not automate retooling or grant central fleet execution
+authority.

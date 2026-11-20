@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Factory.Contracts;
@@ -7,6 +8,7 @@ namespace Factory.Plant.Service;
 
 public interface IGitHubDevelopmentRepository
 {
+    IAsyncEnumerable<DevelopmentIssue> EligibleIssuesAsync(ProductionLineTasks tasks, CancellationToken cancellationToken);
     Task<DevelopmentIssue> IssueAsync(ProductionLineTasks tasks, long number, CancellationToken cancellationToken);
     Task<RepositoryAccessCredential> SourceCredentialAsync(DevelopmentMission mission, bool write, CancellationToken cancellationToken);
     Task<PublishedDevelopmentPullRequest> PublishAsync(DevelopmentMission mission, string candidate, CancellationToken cancellationToken);
@@ -16,20 +18,47 @@ public interface IGitHubDevelopmentRepository
 
 public sealed partial class GitHubRepositoryReader
 {
+    public async IAsyncEnumerable<DevelopmentIssue> EligibleIssuesAsync(ProductionLineTasks tasks,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var access = await InstallationTokenAsync(tasks.ConnectionReference, tasks.Repository,
+            new() { ["issues"] = "read" }, cancellationToken);
+        // GitHub uses commas as separators; comma-containing labels are checked by Validate instead.
+        var labels = Uri.EscapeDataString(string.Join(",", tasks.RequiredLabels.Where(label => !label.Contains(','))));
+        for (var page = 1; page <= 5; page++)
+        {
+            var response = await SendAsync(HttpMethod.Get,
+                $"repos/{tasks.Repository}/issues?state=open&sort=created&direction=asc&labels={labels}&per_page=100&page={page}",
+                access.Token, null, cancellationToken);
+            var items = response.EnumerateArray().ToArray();
+            foreach (var item in items)
+            {
+                if (item.TryGetProperty("pull_request", out _) || item.GetProperty("state").GetString() != "open")
+                    continue;
+                var issue = ReadIssue(tasks, item);
+                try { issue.Validate(tasks); }
+                catch (ContractValidationException) { continue; }
+                yield return issue;
+            }
+            if (items.Length < 100)
+                yield break;
+        }
+        throw new ApiException(409, "issue_queue_limit",
+            "Issue discovery reached its 500-item scan bound; narrow the configured selection labels before retrying.");
+    }
+
     public async Task<DevelopmentIssue> IssueAsync(ProductionLineTasks tasks, long number, CancellationToken cancellationToken)
     {
         if (number <= 0)
-            throw ApiProblems.Invalid("An explicitly assigned issue number is required.");
+            throw ApiProblems.Invalid("A positive issue number is required.");
         var access = await InstallationTokenAsync(tasks.ConnectionReference, tasks.Repository,
             new() { ["issues"] = "read" }, cancellationToken);
         var issue = await SendAsync(HttpMethod.Get, $"repos/{tasks.Repository}/issues/{number}", access.Token, null, cancellationToken);
         if (issue.TryGetProperty("pull_request", out _) || issue.GetProperty("state").GetString() != "open")
             throw new ApiException(409, "issue_not_eligible", "The assigned task must be an open issue, not a pull request.");
-        var body = issue.GetProperty("body").GetString() ?? "";
-        var criteria = AcceptanceCriteria(body);
-        var resolved = new DevelopmentIssue(number, tasks.Repository, issue.GetProperty("title").GetString()!, body,
-            criteria, issue.GetProperty("labels").EnumerateArray().Select(label => label.GetProperty("name").GetString()!).ToArray(),
-            issue.GetProperty("updated_at").GetDateTimeOffset());
+        var resolved = ReadIssue(tasks, issue);
+        if (resolved.Number != number)
+            throw new ApiException(502, "repository_response_invalid", "GitHub returned a different issue number.");
         try { resolved.Validate(tasks); }
         catch (ContractValidationException)
         {
@@ -37,6 +66,15 @@ public sealed partial class GitHubRepositoryReader
                 "The assigned issue needs all configured approval labels and explicit bullet-list Acceptance criteria.");
         }
         return resolved;
+    }
+
+    private static DevelopmentIssue ReadIssue(ProductionLineTasks tasks, JsonElement issue)
+    {
+        var body = issue.GetProperty("body").GetString() ?? "";
+        return new(issue.GetProperty("number").GetInt64(), tasks.Repository, issue.GetProperty("title").GetString()!, body,
+            AcceptanceCriteria(body),
+            issue.GetProperty("labels").EnumerateArray().Select(label => label.GetProperty("name").GetString()!).ToArray(),
+            issue.GetProperty("updated_at").GetDateTimeOffset());
     }
 
     public Task<RepositoryAccessCredential> SourceCredentialAsync(DevelopmentMission mission, bool write, CancellationToken cancellationToken)
@@ -101,9 +139,24 @@ public sealed partial class GitHubRepositoryReader
         var current = await SendAsync(HttpMethod.Get, prefix + $"pulls/{pullRequest.Number}", access.Token, null, cancellationToken);
         var head = current.GetProperty("head").GetProperty("sha").GetString()!;
         if (current.GetProperty("head").GetProperty("ref").GetString() != mission.Branch ||
+            current.GetProperty("number").GetInt64() != pullRequest.Number ||
+            pullRequest.Repository != source.Repository || pullRequest.Branch != mission.Branch ||
+            pullRequest.BaseBranch != source.BaseBranch ||
+            current.GetProperty("head").GetProperty("repo").GetProperty("full_name").GetString() != source.Repository ||
+            current.GetProperty("base").GetProperty("repo").GetProperty("full_name").GetString() != source.Repository ||
             current.GetProperty("base").GetProperty("ref").GetString() != source.BaseBranch ||
+            current.GetProperty("html_url").GetString() != pullRequest.Url ||
             !(current.GetProperty("body").GetString() ?? "").Contains(Marker(mission), StringComparison.Ordinal))
             throw new ApiException(409, "publication_changed", "PR ownership or base changed outside this mission.");
+        var state = current.GetProperty("state").GetString()!;
+        if (current.GetProperty("merged").GetBoolean())
+        {
+            if (state != "closed")
+                throw new ApiException(502, "repository_response_invalid", "A merged GitHub PR must be closed.");
+            return new(head, "merged", []);
+        }
+        if (state == "closed")
+            return new(head, "closed", []);
         var feedback = new List<DevelopmentReviewFeedback>();
         foreach (var review in await Pages(prefix + $"pulls/{pullRequest.Number}/reviews"))
         {
@@ -139,7 +192,7 @@ public sealed partial class GitHubRepositoryReader
         }
         if (feedback.Any(item => item.Body.Length > 16 * 1024))
             throw new ApiException(409, "review_too_large", "Review feedback exceeds the mission intake bound.");
-        var result = new DevelopmentReview(head, current.GetProperty("state").GetString()!, feedback.ToArray());
+        var result = new DevelopmentReview(head, state, feedback.ToArray());
         if (JsonSerializer.SerializeToUtf8Bytes(result, RepositoryWorkload.Json).Length > 96 * 1024)
             throw new ApiException(409, "review_too_large", "Aggregate review feedback exceeds the bounded worker transport.");
         return result;

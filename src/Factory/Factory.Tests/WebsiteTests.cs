@@ -36,6 +36,15 @@ public sealed class WebsiteTests
             ["RequiredLabels"] = "approved",
             ["MaximumIterations"] = "3",
             ["TimeoutMinutes"] = "30",
+            ["AllowShellExecution"] = "true",
+            ["AllowPublication"] = "true",
+            ["ConfigureExecution"] = "true",
+            ["ExecutionEnabled"] = "true",
+            ["Model"] = "test-model",
+            ["GitAuthorName"] = "Factory",
+            ["GitAuthorEmail"] = "factory@example.invalid",
+            ["Reviewers"] = "reviewer, another-reviewer",
+            ["ApprovalTimeoutHours"] = "24",
             ["OperationKey"] = Hidden(html, "OperationKey"),
             ["Revision"] = Hidden(html, "Revision")
         };
@@ -47,9 +56,14 @@ public sealed class WebsiteTests
         Assert.Equal(HttpStatusCode.Redirect, created.StatusCode);
         var line = Assert.Single(app.Store.All<ProductionLineRecord>()).Line;
         Assert.Equal("chieftn/productionOutput1", line.Definition.Tasks.Repository);
+        Assert.Equal("test-model", line.Definition.Execution!.Model);
+        Assert.Equal(["reviewer", "another-reviewer"], line.Definition.Execution.Reviewers);
+        Assert.Equal(24, line.Definition.Execution.ApprovalTimeoutHours);
         using var definitionPage = await browser.GetAsync($"/production-lines/{line.Id}");
         Assert.Equal(HttpStatusCode.OK, definitionPage.StatusCode);
         html = await definitionPage.Content.ReadAsStringAsync();
+        Assert.Contains("value=\"test-model\"", html);
+        Assert.Contains("connected Copilot account", html);
         form["OperationKey"] = Hidden(html, "OperationKey");
         form["Revision"] = Hidden(html, "Revision");
         form["__RequestVerificationToken"] = Hidden(html, "__RequestVerificationToken");

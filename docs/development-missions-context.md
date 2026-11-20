@@ -206,3 +206,150 @@ service rollout. Eight focused browser/authentication cases and anonymous live
 checks passed, with all production configuration preserved. Evidence is under
 `src\Factory\artifacts\service\copilot-auth-resume-20261116-001`. No user setup
 record, GitHub App or credential was changed by the rollout itself.
+
+## Continuous issue queue and explicit completion
+
+The user clarified that a line should continually select eligible issues and
+advance only after its own PR is **merged**, then explicitly authorized this
+implementation. Approval is readiness, not workflow completion.
+
+The repository workload now declares `workflow.completionCriterion` as
+`pull_request_merged`, the only supported criterion. Legacy manifests remain
+readable without changing frozen JSON/digests, but missing completion criteria
+block execution. Issue acceptance criteria and repository verification remain
+separate inputs; Factory does not embed package-file-specific validation.
+
+The plant selects oldest-created open issues with all configured labels and
+explicit Acceptance criteria bullets, excluding PRs and existing durable claims.
+An empty queue is idle, not a failure. Discovery is bounded to five pages of 100;
+reaching the bound reports an explicit error instead of pretending the queue is
+empty. The host no longer selects a fixed issue number.
+
+Trusted approval moves to `awaitingMerge`; subsequent trusted feedback can still
+revise the same PR within the original budgets. GitHub must independently confirm
+the exact owned candidate's merge before the plant accepts `completed`. Only
+completed work with confirmed worker termination permits the next claim. Closed
+without merge, deadline exhaustion and uncertain outcomes retain ownership for
+reconciliation. Factory never merges or silently requeues unsuccessful work.
+
+This is a local implementation, not a service deployment, installer release,
+product-repository edit, execution activation or live SDK acceptance. The product
+workload must declare completion and real verification before an enabled line can
+run; no such remote changes are included here.
+
+### Authorized rollout - November 16, 2026
+
+The user chose to retain the current service-side work-management indirection,
+including task selection, durable claims and merge verification, while the
+worker runs the repository-defined SDK loop. Other work-management providers can
+be adapted behind that service boundary later.
+
+With explicit approval, service deployment
+`59b0d1c2-7788-4018-8b37-c6455bb8f4fd` reached RuntimeSuccessful. All 24 settings,
+authentication, both identities, networking and vault grants were preserved.
+Anonymous health/homepage, protected browser sign-in with code/PKCE and the new
+queue route's bearer challenge passed. No configuration, grant, product issue or
+repository was changed; execution remains disabled.
+
+Unsigned MSI `0.1.8`, release `workbench-0.1.8-queue-001`, is built at
+`src\Factory\artifacts\installer\sdk-018-001\msi\en-US\Factory.Workbench.0.1.8.msi`.
+All 812 embedded files/four cabinets and 527 runtime files, including 297 worker
+files, matched the published sources/manifests. The release includes the existing
+LF bootstrap repair and guided service-owned SDK preparation. Sixty-nine focused
+cases passed; ICE validation was skipped, not passed.
+
+The tester should upgrade in place and run Prepare SDK worker for the new
+release, preserving enrollment and the owned Linux environment. The repository
+still needs the explicit completion criterion, real verification and eligible
+issue inputs before separately authorized activation. No installation, WSL/SDK
+runtime or model call was performed on the shared build machine.
+
+Evidence: `src\Factory\artifacts\service\continuous-queue-20261116-002` and
+`src\Factory\artifacts\installer\sdk-018-001\release-handoff.json`.
+
+## Managed workbench activation - November 17, 2026
+
+The tester subsequently reported successful SDK worker startup and full Linux
+shutdown under the service identity. That is preparation evidence, not proof of
+model entitlement or a completed workflow.
+
+The user rejected manual client JSON/cloud configuration and authorized the
+workbench automation increment. Local changes add optional execution settings
+to the existing production-line form: model, Git commit author, trusted reviewers,
+review/merge deadline and enablement. Assigned machines resolve these settings
+through their existing configuration poll. Repository and Copilot authority
+still comes from the line owner's existing connected accounts; no private key,
+refresh token, personal CLI login or Windows impersonation moves to the client.
+
+Setup now offers **Start line...**, which displays the actual assignment and
+requests explicit local shell/publication consent, and **Stop line**, which
+revokes consent and stops execution while retaining unresolved mission journals.
+Start checks a fresh matching assignment, pinned workload verification/completion
+and prepared worker before saving permissions. Runtime readiness and current
+repository/model authority are rechecked before a claim. Membership, line binding
+or repository changes require renewed consent. Execution-policy changes revoke
+owned mission authority instead of silently changing its frozen inputs.
+
+An unset service development-enable setting allows explicitly enabled managed
+lines, not legacy lines; explicit `false` remains a global operator shutdown
+override. No rollout may silently remove that override. The implementation and
+Windows Setup UI are locally verified, but no replacement MSI, deployment,
+installed-client update, activation or model call was performed for this increment.
+Product verification commands and eligible issue inputs remain required.
+
+## Retooling exploration and authorized release - November 17, 2026
+
+The user identified a gap between assigning a production line and making each
+workbench safely authorized and equipped to run it. Retooling must account for
+old owned work, approval of target permissions/configuration, tool and credential
+changes, readiness evidence and failure/recovery. Existing assignment, consent,
+preparation and stop checks provide pieces, not a complete retooling operation.
+
+Keep the current plant-wide binding and local Start/Stop implementation. No
+central operational control, blanket enrollment delegation or remote PowerShell
+configuration command is selected. Independent device administration and
+short-lived approval of specific add/remove/retool changes remain alternatives.
+A temporary management grant need not make the resulting assignment temporary;
+expiry alone is not proof that an offline device stopped.
+
+The user explicitly authorized three next tasks: record this gap in documents,
+context and progress notes; deploy the updated existing Azure service; then
+build a new MSI. This does not authorize enabling execution, expanding grants,
+mutating the product repository, installing on the shared build machine or
+implementing a retooling subsystem. Record the actual rollout/package outcome
+below rather than treating this authorization as evidence of completion.
+
+See [architecture](architecture.md#retooling-gap-between-assignment-and-execution),
+[execution plan](development-missions-execution-plan.md#retooling-gap---november-17-2026)
+and [security architecture](security-architecture.md).
+
+### Completed release - November 17, 2026
+
+The authorized code-only service update reached RuntimeSuccessful as deployment
+`cfca26c6-d010-41a7-8d52-9f9e5ff4f279`. All 24 settings, browser/API auth,
+both identities, networking and vault grants matched preflight. Anonymous
+health/homepage, protected browser/OIDC/PKCE and bearer-only API/queue checks
+passed. The service remains self-contained Linux with .NET/ASP.NET Core
+`10.0.15`; all 387 archive entries matched the publish tree.
+
+Unsigned MSI `0.1.9`, runtime `workbench-0.1.9-managed-001`, is built at
+`src\Factory\artifacts\installer\managed-019-001\msi\en-US\Factory.Workbench.0.1.9.msi`.
+It is 350,880,080 bytes, SHA-256
+`44AF45FD3F40CF4BA718524DF3B495199171B4A3C7661D3D3D77940D47FBB24D`.
+All 812 embedded files/four cabinets, 527 runtime files and 297 Linux worker
+files matched sources/manifests; helper, production profile and pinned
+Ubuntu/Copilot payloads matched. The 155 focused Release checks passed.
+ICE was skipped, not passed; no installation or runtime/model execution occurred
+on the shared build machine.
+
+The release keeps local Start/Stop and assignment-scoped consent. No grant,
+setting, product repository, line configuration or execution consent was
+changed/enabled. No remote retooling, central Start/Stop or blanket enrollment
+delegation was implemented. The gap is now recorded in architecture, execution
+plan, security documentation and progress notes. Dedicated-machine upgrade/
+preparation, real product checks and eligible issues, explicit activation,
+model entitlement/renewal and complete workflow acceptance remain outstanding.
+
+Evidence: `src\Factory\artifacts\service\managed-execution-20261117-001`
+and `src\Factory\artifacts\installer\managed-019-001\release-handoff.json`.
+No source commit or push was requested/performed for this release.

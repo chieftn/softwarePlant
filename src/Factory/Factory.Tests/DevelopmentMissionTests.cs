@@ -24,7 +24,7 @@ public sealed class DevelopmentMissionTests
     }
 
     [Fact]
-    public async Task IssueBecomesOnePrThenTrustedCommentsReviseSamePrAndOnlyCurrentApprovalCompletes()
+    public async Task IssueRevisesOnePrAndApprovalWaitsForMergedCompletion()
     {
         var fixture = new Fixture();
         var state = await fixture.Runner.AdvanceAsync(DevelopmentMissionState.Claimed(Mission()), CancellationToken.None);
@@ -47,9 +47,50 @@ public sealed class DevelopmentMissionTests
         Assert.Equal(2, fixture.Agent.Implementations);
         fixture.Repository.Feedback = [new("approval-2", "reviewer", state.CandidateCommit!, "approved", "", fixture.Clock.Now)];
         state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
-        Assert.Equal("approved", state.State);
+        Assert.Equal("awaitingMerge", state.State);
+        state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
+        Assert.Equal("awaitingMerge", state.State);
+        fixture.Repository.ReviewState = "merged";
+        state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
+        Assert.Equal("completed", state.State);
+        Assert.Equal(state, await fixture.Runner.AdvanceAsync(state, CancellationToken.None));
         Assert.Equal(2, fixture.Repository.Publications);
         Assert.Equal(2, fixture.Agent.Implementations);
+    }
+
+    [Theory]
+    [InlineData("closed", false, "blocked")]
+    [InlineData("merged", true, "needsAttention")]
+    public async Task ClosedUnmergedOrChangedHeadCannotComplete(string reviewState, bool changedHead, string expected)
+    {
+        var fixture = new Fixture();
+        var state = await fixture.Runner.AdvanceAsync(DevelopmentMissionState.Claimed(Mission()), CancellationToken.None);
+        fixture.Repository.ReviewState = reviewState;
+        fixture.Repository.ChangedHead = changedHead;
+        state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
+        Assert.Equal(expected, state.State);
+        Assert.Equal(state, await fixture.Runner.AdvanceAsync(state, CancellationToken.None));
+        Assert.Equal(1, fixture.Agent.Implementations);
+    }
+
+    [Fact]
+    public async Task ApprovalCanBeWithdrawnAndNewFeedbackStillRevisesWhileWaitingForMerge()
+    {
+        var fixture = new Fixture();
+        var state = await fixture.Runner.AdvanceAsync(DevelopmentMissionState.Claimed(Mission()), CancellationToken.None);
+        fixture.Repository.Feedback = [new("approved", "reviewer", state.CandidateCommit!, "approved", "", fixture.Clock.Now)];
+        state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
+        Assert.Equal("awaitingMerge", state.State);
+        fixture.Repository.Feedback = [];
+        state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
+        Assert.Equal("awaitingApproval", state.State);
+        fixture.Repository.Feedback = [new("approved", "reviewer", state.CandidateCommit!, "approved", "", fixture.Clock.Now)];
+        state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
+        fixture.Repository.Feedback = [new("revision", "reviewer", state.CandidateCommit!, "changesRequested", "Correct ownership.", fixture.Clock.Now)];
+        state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
+        Assert.Equal("awaitingApproval", state.State);
+        Assert.Equal(2, fixture.Agent.Implementations);
+        Assert.Equal(11, state.PullRequest!.Number);
     }
 
     [Fact]
@@ -135,13 +176,18 @@ public sealed class DevelopmentMissionTests
         Assert.Equal(1, state.Iterations);
     }
 
-    [Fact]
-    public async Task HumanWaitDoesNotExecuteAndDeadlineIsNotResetByPolling()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HumanWaitDoesNotExecuteAndDeadlineIsNotResetByPolling(bool approved)
     {
         var fixture = new Fixture();
         var state = await fixture.Runner.AdvanceAsync(DevelopmentMissionState.Claimed(Mission()), CancellationToken.None);
+        if (approved)
+            fixture.Repository.Feedback = [new("approved", "reviewer", state.CandidateCommit!, "approved", "", fixture.Clock.Now)];
         var active = state.ActiveMilliseconds;
         state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
+        Assert.Equal(approved ? "awaitingMerge" : "awaitingApproval", state.State);
         Assert.Equal(active, state.ActiveMilliseconds);
         fixture.Clock.Now = state.Mission.ApprovalDeadline;
         state = await fixture.Runner.AdvanceAsync(state, CancellationToken.None);
@@ -238,6 +284,8 @@ public sealed class DevelopmentMissionTests
         public bool FailedVerification { get; set; }
         public bool LosePublicationResponse { get; set; }
         public bool FailReview { get; set; }
+        public string ReviewState { get; set; } = "open";
+        public bool ChangedHead { get; set; }
         public DevelopmentReviewFeedback[] Feedback { get; set; } = [];
         private PublishedDevelopmentPullRequest? published;
         public Task PrepareAsync(DevelopmentMission mission, CancellationToken cancellationToken)
@@ -264,6 +312,6 @@ public sealed class DevelopmentMissionTests
             CancellationToken cancellationToken) => Task.FromResult(published);
         public Task<DevelopmentReview> ReviewAsync(PublishedDevelopmentPullRequest pullRequest, CancellationToken cancellationToken) =>
             FailReview ? Task.FromException<DevelopmentReview>(new IOException("Synthetic review transport failure."))
-                : Task.FromResult(new DevelopmentReview(pullRequest.CandidateCommit, "open", Feedback));
+                : Task.FromResult(new DevelopmentReview(ChangedHead ? new('f', 40) : pullRequest.CandidateCommit, ReviewState, Feedback));
     }
 }

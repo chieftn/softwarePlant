@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Factory.Contracts;
 using Factory.Plant.Service;
 using Factory.Plant.Service.Storage;
+using Factory.Workbench;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,6 +16,70 @@ namespace Factory.Tests;
 
 public sealed class EnrollmentMissionTests
 {
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task ManagedLineSuppliesExecutionPolicyWithoutManualServiceSettingsAndHonorsShutdown(bool? enabled, bool permitted)
+    {
+        using var app = new MissionApplication();
+        app.Development.Enabled = enabled;
+        app.Development.Reviewers = [];
+        var execution = new ProductionLineExecution(true, "test-model", "Factory", "factory@example.invalid", ["reviewer"], 12);
+        var (enrollment, configuration) = await Assigned(app, execution);
+        using var machine = app.Daemon();
+        var path = $"/v1/enrollments/{enrollment.Id}/mission";
+        var request = Request(configuration);
+        using var response = await SendAsync(machine, HttpMethod.Post, path, request, request.OperationId);
+        if (!permitted)
+        {
+            await ProblemAsync(response, 503, "development_execution_disabled");
+            Assert.Empty(app.Store.All<DevelopmentIssueClaimRecord>());
+            return;
+        }
+        response.EnsureSuccessStatusCode();
+        var delivery = (await response.Content.ReadFromJsonAsync<DevelopmentMissionDelivery>())!;
+        Assert.Equal(execution.Reviewers, delivery.Reviewers);
+        Assert.Equal(app.Clock.Now.AddHours(12), delivery.Mission.ApprovalDeadline);
+        var receipt = new PublishedDevelopmentPullRequest(9, "product/source", delivery.Mission.Branch, "main",
+            new('b', 40), "https://github.com/product/source/pull/9");
+        var waiting = new DevelopmentMissionProgress(delivery.Mission.Id, delivery.Mission.Digest, "awaitingApproval", 1, 10,
+            receipt.CandidateCommit, receipt, false, "Verified candidate awaiting review.");
+        using var published = await SendAsync(machine, HttpMethod.Put, path + "/progress", waiting, Key());
+        published.EnsureSuccessStatusCode();
+        app.Repository.Approved = true;
+        using var approved = await SendAsync(machine, HttpMethod.Put, path + "/progress", waiting with { State = "awaitingMerge" }, Key());
+        approved.EnsureSuccessStatusCode();
+        Assert.Equal("reviewer", Assert.Single((await machine.GetFromJsonAsync<DevelopmentReview>(path + "/review"))!.Feedback).Actor);
+    }
+
+    [Fact]
+    public async Task ManagedLineCannotClaimAnotherModelAndPolicyChangesRevokeOwnedModelAuthority()
+    {
+        using var app = new MissionApplication();
+        app.Development.Enabled = null;
+        var execution = new ProductionLineExecution(true, "test-model", "Factory", "factory@example.invalid", ["reviewer"], 48);
+        var (enrollment, configuration) = await Assigned(app, execution);
+        using var machine = app.Daemon();
+        var path = $"/v1/enrollments/{enrollment.Id}/mission";
+        var wrongModel = Request(configuration) with { Model = "other-model" };
+        using var denied = await SendAsync(machine, HttpMethod.Post, path, wrongModel, wrongModel.OperationId);
+        await ProblemAsync(denied, 403, "development_not_permitted");
+        Assert.Empty(app.Store.All<DevelopmentIssueClaimRecord>());
+        var delivery = await Claim(machine, path, Request(configuration));
+        using var owner = app.Human();
+        var line = configuration.ProductionLine!;
+        using var update = new HttpRequestMessage(HttpMethod.Put, $"/v1/production-lines/{line.Id}")
+        { Content = JsonContent.Create(line.Definition with { Execution = execution with { Reviewers = ["replacement"] } }) };
+        update.Headers.Add("Idempotency-Key", Key());
+        update.Headers.Add("If-Match", line.Revision);
+        using var updated = await owner.SendAsync(update);
+        updated.EnsureSuccessStatusCode();
+        using var revoked = await machine.PostAsync(path + "/authorize", null);
+        await ProblemAsync(revoked, 409, "mission_revoked");
+        Assert.Equal(delivery.Mission.Digest, Assert.Single(app.Store.All<DevelopmentMissionRecord>()).Mission.Digest);
+    }
+
     [Fact]
     public async Task ClaimFreezesIssueAndSourceAndIsUniqueAcrossWorkbenches()
     {
@@ -40,6 +105,216 @@ public sealed class EnrollmentMissionTests
         using var owned = await SendAsync(otherMachine, HttpMethod.Post, $"/v1/enrollments/{other.Id}/mission",
             otherRequest, otherRequest.OperationId);
         Assert.Equal(HttpStatusCode.Conflict, owned.StatusCode);
+        Assert.Single(app.Store.All<DevelopmentIssueClaimRecord>());
+    }
+
+    [Fact]
+    public async Task QueueIsIdleWhenEmptyAndDoesNotAdvanceOnApprovalOrBeforeMergedWorkerTerminates()
+    {
+        using var app = new MissionApplication();
+        var (enrollment, configuration) = await Assigned(app);
+        using var machine = app.Daemon();
+        var path = $"/v1/enrollments/{enrollment.Id}/mission";
+        DevelopmentQueueRequest RequestNext() => new(Key(), WorkloadRequest.From(configuration),
+            Request(configuration).WorkloadDigest, "test-model");
+        app.Repository.Issues = [];
+        Assert.Null((await Next(machine, path, RequestNext())).Mission);
+        Assert.Empty(app.Store.All<DevelopmentIssueClaimRecord>());
+        app.Repository.Issues = [7, 8];
+        var request = RequestNext();
+        var first = (await Next(machine, path, request)).Mission!;
+        Assert.Equal(7, first.Mission.Issue.Number);
+        Assert.Equal(first.Mission.Digest, (await Next(machine, path, request)).Mission!.Mission.Digest);
+        var receipt = new PublishedDevelopmentPullRequest(9, "product/source", first.Mission.Branch, "main",
+            new('b', 40), "https://github.com/product/source/pull/9");
+        var waiting = new DevelopmentMissionProgress(first.Mission.Id, first.Mission.Digest, "awaitingApproval", 1, 10,
+            receipt.CandidateCommit, receipt, false, "Verified candidate awaiting review.");
+        using var published = await SendAsync(machine, HttpMethod.Put, path + "/progress", waiting, Key());
+        published.EnsureSuccessStatusCode();
+        app.Repository.Approved = true;
+        using var approved = await SendAsync(machine, HttpMethod.Put, path + "/progress", waiting with { State = "awaitingMerge" }, Key());
+        approved.EnsureSuccessStatusCode();
+        using var earlyTermination = await machine.PostAsJsonAsync(path + "/terminated", new MissionTerminationRequest(first.Mission.Id, true));
+        earlyTermination.EnsureSuccessStatusCode();
+        var stillWaiting = (await Next(machine, path, RequestNext())).Mission!;
+        Assert.Equal("awaitingMerge", stillWaiting.State);
+        Assert.Equal(first.Mission.Id, stillWaiting.Mission.Id);
+        var premature = Request(configuration) with { IssueNumber = 8 };
+        using var explicitPrematureClaim = await SendAsync(machine, HttpMethod.Post, path, premature, premature.OperationId);
+        Assert.Equal(HttpStatusCode.Conflict, explicitPrematureClaim.StatusCode);
+        var completed = waiting with { State = "completed", Reason = "Observed owned PR merge." };
+        foreach (var state in new[] { "open", "closed" })
+        {
+            app.Repository.ReviewState = state;
+            using var falseCompletion = await SendAsync(machine, HttpMethod.Put, path + "/progress", completed, Key());
+            Assert.Equal(HttpStatusCode.Conflict, falseCompletion.StatusCode);
+        }
+        app.Repository.ReviewState = "merged";
+        app.Repository.ChangedHead = true;
+        using var wrongHead = await SendAsync(machine, HttpMethod.Put, path + "/progress", completed, Key());
+        Assert.Equal(HttpStatusCode.Conflict, wrongHead.StatusCode);
+        app.Repository.ChangedHead = false;
+        app.Repository.Changed = true;
+        using var observeAfterIssueAutoClosure = await machine.PostAsync(path + "/authorize", null);
+        observeAfterIssueAutoClosure.EnsureSuccessStatusCode();
+        using var merged = await SendAsync(machine, HttpMethod.Put, path + "/progress", completed, Key());
+        merged.EnsureSuccessStatusCode();
+        Assert.False(Assert.Single(app.Store.All<DevelopmentMissionRecord>()).TerminationConfirmed);
+        Assert.Equal(first.Mission.Id, (await Next(machine, path, RequestNext())).Mission!.Mission.Id);
+        using var regress = await SendAsync(machine, HttpMethod.Put, path + "/progress", waiting, Key());
+        Assert.Equal(HttpStatusCode.Conflict, regress.StatusCode);
+        using var terminated = await machine.PostAsJsonAsync(path + "/terminated", new MissionTerminationRequest(first.Mission.Id, true));
+        terminated.EnsureSuccessStatusCode();
+        app.Repository.SourceCommit = new('c', 40);
+        var staleRequest = RequestNext();
+        using var stale = await SendAsync(machine, HttpMethod.Post, path + "/next", staleRequest, staleRequest.OperationId);
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Equal("workload_changed", (await stale.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("code").GetString());
+        var refreshed = staleRequest with { WorkloadDigest = (await app.Repository.ResolveAsync(configuration, CancellationToken.None)).Digest };
+        var next = (await Next(machine, path, refreshed)).Mission!;
+        Assert.Equal(8, next.Mission.Issue.Number);
+        Assert.Equal(app.Repository.SourceCommit, next.Mission.Workload.SourceCommit);
+        Assert.NotEqual(first.Mission.Id, next.Mission.Id);
+        Assert.Equal(2, app.Store.All<DevelopmentIssueClaimRecord>().Length);
+        Assert.Equal("completed", (await Next(machine, path, request)).Mission!.State);
+        Assert.Equal(2, app.Store.All<DevelopmentIssueClaimRecord>().Length);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task HostRefreshesIncompleteSpecsPollsQueueAndMigratesPendingClaimIntent(bool checksMissing, bool managed)
+    {
+        using var app = new MissionApplication();
+        app.Development.Enabled = managed ? null : true;
+        var (enrollment, current) = await Assigned(app, managed
+            ? new(true, "test-model", "Factory", "factory@example.invalid", ["reviewer"], 48) : null);
+        using var machine = app.Daemon();
+        app.Repository.Issues = [];
+        var root = Path.Combine(Path.GetTempPath(), $"factory-queue-host-{Guid.NewGuid():N}");
+        try
+        {
+            var installationId = Key();
+            const string release = "queue-test-001";
+            var configuration = new WorkbenchConfiguration
+            {
+                SchemaVersion = "1",
+                InstallationId = installationId,
+                PlantServiceUrl = "https://plant.example",
+                TenantId = ApiTestApplication.Tenant,
+                ApiClientId = ApiTestApplication.Audience,
+                InstallerClientId = ApiTestApplication.Audience,
+                Distribution = WslWorkerEnvironment.DistributionName(installationId),
+                LinuxUser = WslWorkerEnvironment.LinuxUser,
+                LinuxWorkspaceRoot = WslWorkerEnvironment.Workspace,
+                AllowedRepositories = ["product/source", "product/tasks"],
+                AllowShellExecution = true,
+                AllowPublication = true,
+                ExecutionConsent = managed ? WorkbenchExecutionConsent.From(current) : null,
+                Development = new()
+                {
+                    Enabled = !managed,
+                    AssignedIssueNumber = 999,
+                    WorkerExecutable = WslWorkerEnvironment.WorkerExecutable(release),
+                    Model = managed ? "" : "test-model",
+                    GitAuthorName = managed ? "" : "Factory",
+                    GitAuthorEmail = managed ? "" : "factory@example.invalid"
+                }
+            };
+            ConfigurationStore.Save(root, configuration);
+            LocalState.SaveInstallation(root, new("1", installationId, Path.Combine(root, "binaries"), "installed",
+                release, null, null, [release], true));
+            LocalState.Write(WslWorkerEnvironment.StatusPath(root), new WorkerSetupStatus(Key(), installationId,
+                release, Environment.ProcessId, DateTimeOffset.UtcNow, "ready", "complete", "Isolated readiness fixture."));
+            var binding = new WorkbenchBinding("1", installationId, null, current.WorkbenchId, ApiTestApplication.Tenant,
+                ApiTestApplication.DaemonClientId, ApiTestApplication.DaemonId, new('A', 40), enrollment.Id);
+            WorkbenchLineConfigurationStore.Apply(root, binding, current);
+            var oldFiles = RepositoryWorkloadTests.Files(!checksMissing);
+            if (!checksMissing)
+                oldFiles["workload.json"] = oldFiles["workload.json"].Replace(",\"completionCriterion\":\"pull_request_merged\"", "");
+            WorkbenchWorkloadStore.Save(root, binding, ResolvedRepositoryWorkload.Create(current, new('a', 40), oldFiles));
+            var legacyPath = Path.Combine(LocalState.RuntimeDirectory(root), "pending-development-claim.json");
+            LocalState.Write(legacyPath, Request(current));
+            var plant = new PlantHttp(machine, _ => Task.FromResult(
+                app.Token(ApiTestApplication.DaemonId, ["Workbench.Connect"], false, ApiTestApplication.DaemonClientId)));
+            await WorkbenchWorkloadStore.ObserveAsync(root, binding,
+                WorkbenchLineConfigurationStore.Read(root, binding)!, plant, CancellationToken.None);
+            var refreshed = WorkbenchWorkloadStore.Read(root, binding, current)!.Validate();
+            Assert.NotEmpty(refreshed.Verification.Commands);
+            Assert.Equal("pull_request_merged", refreshed.Workflow.CompletionCriterion);
+            var host = new WorkbenchDevelopmentExecution(plant, binding, configuration, root);
+            await host.ObserveAsync(current, CancellationToken.None);
+            await host.TickAsync(CancellationToken.None);
+            await host.TickAsync(CancellationToken.None);
+            Assert.Equal("idle", host.State);
+            Assert.Contains("No unclaimed eligible issues", host.Reason);
+            Assert.False(File.Exists(legacyPath));
+            Assert.False(File.Exists(Path.Combine(LocalState.RuntimeDirectory(root), "pending-development-queue.json")));
+            Assert.False(File.Exists(Path.Combine(LocalState.RuntimeDirectory(root), "active-development-worker.json")));
+            Assert.Empty(app.Store.All<DevelopmentIssueClaimRecord>());
+            WorkbenchWorkloadStore.Revoke(root);
+            await host.TickAsync(CancellationToken.None);
+            Assert.Equal("notReady", host.State);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task QueueSkipsDurableClaimsAndRecoversFromSelectionRaceWithoutReplayingRejectedWork()
+    {
+        using var app = new MissionApplication();
+        var (enrollment, configuration) = await Assigned(app);
+        using var machine = app.Daemon();
+        var path = $"/v1/enrollments/{enrollment.Id}/mission";
+        DevelopmentQueueRequest RequestNext() => new(Key(), WorkloadRequest.From(configuration),
+            Request(configuration).WorkloadDigest, "test-model");
+        app.Store.AfterCommit = writes =>
+        {
+            if (writes.Any(write => write.Record is DevelopmentMissionRecord { Progress.State: "reserving", Mission.Issue.Number: 7 }))
+                app.Store.Seed(new DevelopmentIssueClaimRecord
+                {
+                    Id = "issue-7",
+                    ScopeId = "development-issues:product/tasks",
+                    EnrollmentId = Key(),
+                    MissionId = Key()
+                });
+            return Task.CompletedTask;
+        };
+        var raced = RequestNext();
+        using var lost = await SendAsync(machine, HttpMethod.Post, path + "/next", raced, raced.OperationId);
+        Assert.Equal(HttpStatusCode.Conflict, lost.StatusCode);
+        Assert.Equal("rejected", Assert.Single(app.Store.All<DevelopmentMissionRecord>()).Progress.State);
+        Assert.Equal("rejected", (await Next(machine, path, raced)).Mission!.State);
+        var next = (await Next(machine, path, RequestNext())).Mission!;
+        Assert.Equal(8, next.Mission.Issue.Number);
+        Assert.Equal("claimed", next.State);
+    }
+
+    [Theory]
+    [InlineData("blocked")]
+    [InlineData("needsAttention")]
+    [InlineData("cancelled")]
+    public async Task UnresolvedQueueMissionsRetainOwnership(string state)
+    {
+        using var app = new MissionApplication();
+        var (enrollment, configuration) = await Assigned(app);
+        using var machine = app.Daemon();
+        var path = $"/v1/enrollments/{enrollment.Id}/mission";
+        var claim = Request(configuration);
+        var first = await Claim(machine, path, claim);
+        using var fault = await SendAsync(machine, HttpMethod.Put, path + "/progress",
+            new DevelopmentMissionProgress(first.Mission.Id, first.Mission.Digest, state, 0, 0, null, null, false, "Requires reconciliation."), Key());
+        fault.EnsureSuccessStatusCode();
+        var request = new DevelopmentQueueRequest(Key(), claim.Configuration, claim.WorkloadDigest, claim.Model);
+        var retained = (await Next(machine, path, request)).Mission!;
+        Assert.Equal(first.Mission.Id, retained.Mission.Id);
+        Assert.Equal(state, retained.State);
         Assert.Single(app.Store.All<DevelopmentIssueClaimRecord>());
     }
 
@@ -240,13 +515,21 @@ public sealed class EnrollmentMissionTests
         return (await response.Content.ReadFromJsonAsync<DevelopmentMissionDelivery>())!;
     }
 
-    private static async Task<(EnrollmentRecord, WorkbenchLineConfiguration)> Assigned(MissionApplication app)
+    private static async Task<DevelopmentQueueSelection> Next(HttpClient machine, string path, DevelopmentQueueRequest request)
+    {
+        using var response = await SendAsync(machine, HttpMethod.Post, path + "/next", request, request.OperationId);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<DevelopmentQueueSelection>())!;
+    }
+
+    private static async Task<(EnrollmentRecord, WorkbenchLineConfiguration)> Assigned(MissionApplication app,
+        ProductionLineExecution? execution = null)
     {
         using var owner = app.Human();
         using var machine = app.Daemon();
         var (plant, _) = await CreateAsync(owner, "Plant");
         var enrollment = SeedMember(app, plant.Id);
-        var line = await CreateLineAsync(owner, Definition() with { Policy = new(true, true, 3, 30) });
+        var line = await CreateLineAsync(owner, Definition() with { Policy = new(true, true, 3, 30), Execution = execution });
         using var assignment = await owner.PutAsJsonAsync($"/v1/plants/{plant.Id}/production-line",
             new ProductionLineAssignment("1", 0, line.Id));
         assignment.EnsureSuccessStatusCode();
@@ -298,12 +581,22 @@ public sealed class EnrollmentMissionTests
         public int WriteGrants { get; private set; }
         public bool Approved { get; set; }
         public bool Changed { get; set; }
+        public bool ChangedHead { get; set; }
+        public string ReviewState { get; set; } = "open";
+        public long[] Issues { get; set; } = [7, 8];
+        public string SourceCommit { get; set; } = new('a', 40);
         private readonly DateTimeOffset updated = DateTimeOffset.UtcNow;
         public Task<ResolvedRepositoryWorkload> ResolveAsync(WorkbenchLineConfiguration configuration, CancellationToken cancellationToken) =>
-            Task.FromResult(ResolvedRepositoryWorkload.Create(configuration, new('a', 40), RepositoryWorkloadTests.Files(true)));
+            Task.FromResult(ResolvedRepositoryWorkload.Create(configuration, SourceCommit, RepositoryWorkloadTests.Files(true)));
         public Task<DevelopmentIssue> IssueAsync(ProductionLineTasks tasks, long number, CancellationToken cancellationToken) =>
             Task.FromResult(new DevelopmentIssue(number, tasks.Repository, "Approved task", "## Acceptance criteria\n- Preserve ownership.",
                 ["Preserve ownership."], ["approved"], Changed ? updated.AddSeconds(1) : updated));
+        public async IAsyncEnumerable<DevelopmentIssue> EligibleIssuesAsync(ProductionLineTasks tasks,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            foreach (var number in Issues)
+                yield return await IssueAsync(tasks, number, cancellationToken);
+        }
         public Task<RepositoryAccessCredential> SourceCredentialAsync(DevelopmentMission mission, bool write, CancellationToken cancellationToken)
         {
             if (write)
@@ -315,7 +608,7 @@ public sealed class EnrollmentMissionTests
         public async Task<PublishedDevelopmentPullRequest?> PublishedAsync(DevelopmentMission mission, string candidate, CancellationToken cancellationToken) =>
             await PublishAsync(mission, candidate, cancellationToken);
         public Task<DevelopmentReview> ReviewAsync(DevelopmentMission mission, PublishedDevelopmentPullRequest pullRequest, CancellationToken cancellationToken) =>
-            Task.FromResult(new DevelopmentReview(pullRequest.CandidateCommit, "open", Approved
+            Task.FromResult(new DevelopmentReview(ChangedHead ? new('f', 40) : pullRequest.CandidateCommit, ReviewState, Approved
                 ? [new("review-1", "reviewer", pullRequest.CandidateCommit, "approved", "", DateTimeOffset.UtcNow)] : []));
     }
 }

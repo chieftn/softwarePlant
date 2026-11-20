@@ -11,6 +11,28 @@ public sealed record ProductionLineTasks(string Provider, string Repository, str
 public sealed record ProductionLinePolicy(bool AllowShellExecution, bool AllowPublication,
     int MaximumIterations, int TimeoutMinutes);
 
+public sealed record ProductionLineExecution(bool Enabled, string Model, string GitAuthorName,
+    string GitAuthorEmail, string[] Reviewers, int ApprovalTimeoutHours)
+{
+    public void Validate()
+    {
+        ContractValidation.Text(Model, 128, "model");
+        ContractValidation.Text(GitAuthorName, 128, "Git author name");
+        ContractValidation.Text(GitAuthorEmail, 254, "Git author email");
+        ContractValidation.Require(ApprovalTimeoutHours is >= 1 and <= 168 &&
+            Reviewers is { Length: > 0 and <= 32 } && Reviewers.All(actor =>
+                !string.IsNullOrWhiteSpace(actor) && actor.Length <= 39 &&
+                actor.All(character => char.IsAsciiLetterOrDigit(character) || character == '-')) &&
+            Reviewers.Distinct(StringComparer.OrdinalIgnoreCase).Count() == Reviewers.Length,
+            "Specify distinct trusted GitHub reviewers and a human review/merge deadline of 1-168 hours.");
+    }
+
+    public bool Matches(ProductionLineExecution? other) => other is not null &&
+        Enabled == other.Enabled && Model == other.Model && GitAuthorName == other.GitAuthorName &&
+        GitAuthorEmail == other.GitAuthorEmail && ApprovalTimeoutHours == other.ApprovalTimeoutHours &&
+        Reviewers.SequenceEqual(other.Reviewers, StringComparer.OrdinalIgnoreCase);
+}
+
 public sealed record ProductionLineWriteRequest
 {
     public required string SchemaVersion { get; init; }
@@ -18,6 +40,8 @@ public sealed record ProductionLineWriteRequest
     public required ProductionLineSource Source { get; init; }
     public required ProductionLineTasks Tasks { get; init; }
     public required ProductionLinePolicy Policy { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProductionLineExecution? Execution { get; init; }
 
     public void Validate()
     {
@@ -56,6 +80,9 @@ public sealed record ProductionLineWriteRequest
             Policy.TimeoutMinutes is >= 1 and <= 240, "Execution limits must be bounded: 1-20 iterations and 1-240 minutes.");
         ContractValidation.Require(!Policy.AllowPublication || Policy.AllowShellExecution,
             "Publication requires shell execution approval.");
+        Execution?.Validate();
+        ContractValidation.Require(Execution?.Enabled != true || Policy.AllowShellExecution && Policy.AllowPublication,
+            "Enabled development execution requires line shell and publication approval.");
     }
 
     private static void Repository(string value, string field)

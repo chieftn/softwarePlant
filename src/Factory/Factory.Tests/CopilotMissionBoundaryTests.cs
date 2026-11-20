@@ -122,8 +122,10 @@ public sealed class CopilotMissionBoundaryTests
         Assert.False(MissionPermissionPolicy.Allows(shell, Path.GetTempPath(), true));
         Assert.False(MissionPermissionPolicy.Allows(shell, Path.GetTempPath(), false));
     }
-    [Fact]
-    public void WorkerInvocationUsesArgumentArraysAndDoesNotPlaceCredentialsOnCommandLine()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(7)]
+    public void WorkerInvocationUsesArgumentArraysAndDoesNotPlaceCredentialsOnCommandLine(long legacyIssueNumber)
     {
         var configuration = new WorkbenchConfiguration
         {
@@ -142,7 +144,7 @@ public sealed class CopilotMissionBoundaryTests
             Development = new()
             {
                 Enabled = true,
-                AssignedIssueNumber = 7,
+                AssignedIssueNumber = legacyIssueNumber,
                 WorkerExecutable = "/opt/factory/worker",
                 Model = "test-model",
                 GitAuthorName = "Factory",

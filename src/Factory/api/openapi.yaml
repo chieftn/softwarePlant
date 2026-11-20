@@ -1093,9 +1093,12 @@ paths:
       description: |
         Disabled by default. Requires current machine/configuration authority,
         explicit issue number, labels, acceptance criteria, verification commands,
+        workflow.completionCriterion set to pull_request_merged,
         publication policy and trusted reviewers. Idempotency-Key must equal the
         request operationId. Repository-wide issue ownership is unique; uncertain
-        reservations are retained rather than automatically requeued.
+        reservations are retained rather than automatically requeued. Compatibility
+        endpoint for explicit selection; the continuous workbench uses mission/next.
+        A new mission requires prior merged completion and confirmed termination.
       security:
         - WorkbenchBearer: []
       parameters:
@@ -1122,6 +1125,46 @@ paths:
           $ref: '#/components/responses/DevelopmentMissionDelivery'
         default:
           $ref: '#/components/responses/UnexpectedFailure'
+  /v1/enrollments/{operationId}/mission/next:
+    parameters:
+      - $ref: '#/components/parameters/EnrollmentId'
+    post:
+      operationId: claimNextDevelopmentMission
+      tags: [ProductionLines]
+      summary: Resume owned work or claim the oldest unclaimed eligible issue.
+      description: |
+        Disabled by default, with the same authority and execution gates as explicit
+        claims. Returns the existing mission until it is completed and its worker
+        termination is confirmed. Approval alone never advances the queue.
+        Open issues must have every required label and explicit bullet-list
+        Acceptance criteria. Pull requests and permanently claimed issues are excluded.
+        GitHub discovery requests oldest-created order and scans at most five pages
+        of 100 results; exhausting that bound is an explicit issue_queue_limit error.
+        Selection races retain/reject reservations safely; issue_owned permits a
+        fresh queue operation, never replay of the rejected mission.
+        Idempotency-Key equals request operationId. A selected mission is durable
+        and retries return it, including after archival. A null mission explicitly
+        means no eligible unclaimed issue was found; it creates no reservation, so
+        polling the same operation later may select newly available work.
+      security:
+        - WorkbenchBearer: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentQueueRequest'
+      responses:
+        '200':
+          description: Existing/selected mission, or an explicitly empty queue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentQueueSelection'
+        default:
+          $ref: '#/components/responses/UnexpectedFailure'
   /v1/enrollments/{operationId}/mission/authorize:
     parameters:
       - $ref: '#/components/parameters/EnrollmentId'
@@ -1129,6 +1172,10 @@ paths:
       operationId: authorizeDevelopmentMission
       tags: [ProductionLines]
       summary: Recheck current ownership, policy, repository/model authority and frozen issue.
+      description: |
+        Review/merge waits recheck current authority without requiring the task
+        to remain open; GitHub can auto-close it on merge. New execution and
+        publication still require the unchanged, open, eligible frozen issue.
       security:
         - WorkbenchBearer: []
       responses:
@@ -1441,6 +1488,51 @@ components:
           $ref: '#/components/schemas/ProductionLineTasks'
         policy:
           $ref: '#/components/schemas/ProductionLinePolicy'
+        execution:
+          $ref: '#/components/schemas/ProductionLineExecution'
+    ProductionLineExecution:
+      type: object
+      additionalProperties: false
+      required: [enabled, model, gitAuthorName, gitAuthorEmail, reviewers, approvalTimeoutHours]
+      description: |
+        Optional line-managed execution settings, never credentials. Omitted on legacy
+        definitions so frozen workload/mission digests remain unchanged. Enabling
+        requires line shell/publication approval and independent assignment-scoped
+        local consent in Workbench Setup. Factory delegates the line owner's connected
+        repository and Copilot authority. An explicit service-level
+        Factory:Development:Enabled=false overrides every line; when unset, only
+        explicitly enabled managed lines can execute without legacy service settings.
+        Changing these settings revokes existing mission authority.
+      properties:
+        enabled:
+          type: boolean
+        model:
+          type: string
+          minLength: 1
+          maxLength: 128
+        gitAuthorName:
+          type: string
+          minLength: 1
+          maxLength: 128
+        gitAuthorEmail:
+          type: string
+          minLength: 1
+          maxLength: 254
+        reviewers:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          description: Trusted GitHub usernames; duplicates are rejected case-insensitively.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 39
+            pattern: '^[a-zA-Z0-9-]+$'
+        approvalTimeoutHours:
+          type: integer
+          minimum: 1
+          maximum: 168
     ProductionLineSource:
       type: object
       additionalProperties: false
@@ -1719,6 +1811,32 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+    DevelopmentQueueRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, configuration, workloadDigest, model]
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        configuration:
+          $ref: '#/components/schemas/WorkloadRequest'
+        workloadDigest:
+          $ref: '#/components/schemas/SnapshotDigest'
+        model:
+          type: string
+          minLength: 1
+          maxLength: 128
+    DevelopmentQueueSelection:
+      type: object
+      additionalProperties: false
+      required: [mission]
+      properties:
+        mission:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/DevelopmentMissionDelivery'
     DevelopmentIssue:
       type: object
       additionalProperties: false
@@ -1779,7 +1897,7 @@ components:
         approvalDeadline:
           type: string
           format: date-time
-          description: Fixed human deadline, no later than seven days after createdAt.
+          description: Fixed human review/merge deadline, no later than seven days after createdAt.
         digest:
           $ref: '#/components/schemas/SnapshotDigest'
         branch:
@@ -1795,7 +1913,8 @@ components:
           $ref: '#/components/schemas/DevelopmentMission'
         state:
           type: string
-          enum: [reserving, rejected, claimed, executing, publishing, awaitingApproval, revising, approved, blocked, cancelled, needsAttention]
+          enum: [reserving, rejected, claimed, executing, publishing, awaitingApproval, awaitingMerge, revising, approved, completed, blocked, cancelled, needsAttention]
+          description: Approved is a legacy nonterminal review state. Only completed satisfies the declared merge criterion.
         reviewers:
           type: array
           minItems: 1
@@ -1911,6 +2030,8 @@ components:
           $ref: '#/components/schemas/GitCommit'
         state:
           type: string
+          enum: [open, closed, merged]
+          description: Merged requires GitHub's explicit merged flag on the exact owned pull request, not merely a closed state.
         feedback:
           type: array
           items:
@@ -1927,7 +2048,8 @@ components:
           $ref: '#/components/schemas/SnapshotDigest'
         state:
           type: string
-          enum: [claimed, executing, publishing, awaitingApproval, revising, approved, blocked, cancelled, needsAttention]
+          enum: [claimed, executing, publishing, awaitingApproval, awaitingMerge, revising, approved, completed, blocked, cancelled, needsAttention]
+          description: The service independently verifies trusted approval and merged completion against GitHub; completion cannot regress.
         iterations:
           type: integer
           minimum: 0

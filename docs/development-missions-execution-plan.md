@@ -326,3 +326,51 @@ Detailed results and decisions are recorded in
 uncommitted; no new grants, service deployment, client installation, live SDK/WSL
 execution or repository mutation occurred. Keep execution disabled until the
 recorded activation blockers are resolved and the separate rollout is approved.
+
+### Retooling gap - November 17, 2026
+
+The user identified retooling as an exploration gap and requested that it be
+recorded before further design. Current assignment changes and local setup do
+not form a complete retooling operation.
+
+| Question | Existing piece | Missing coordination or decision |
+|---|---|---|
+| What must stop? | Versioned revocation, worker termination and retained claims/journals. | Account for owned work and uncertain stop/publication effects before transition proceeds. |
+| Who approves the target? | Plant/line ownership, connection authority and assignment-scoped local consent. | Decide whether and how independent device administration approves a reviewed target configuration without visiting every machine. |
+| What changes? | Line settings, pinned workload retrieval, prepared Linux runtime and mission credentials. | Determine and apply target-specific tools/configuration/permissions without treating assignment as readiness. |
+| What proves readiness? | Release/process-bound SDK preparation checks and separate workload/mission gates. | Report the target as applied, authorized and ready, or name the remaining blocker. |
+| What if it fails? | Conservative stop/recovery and durable ownership. | Define interrupted-transition recovery and operator reconciliation without replaying uncertain effects. |
+
+Enrollment identity, plant membership, desired line assignment, device-side
+permission and applied tooling are distinct. Today a plant line change affects
+all members, stops/revokes old work as observed, and invalidates their local
+binding consent; each member needs local Start line for the new assignment.
+This remains the chosen implementation for the current release.
+
+The alternatives discussed were durable central delegation and an independent
+administrative channel that automates device-side grants. Short-lived,
+target-scoped grants for add/remove/retool operations are another open option;
+expiry would close a management-change window, not automatically undo the result
+or prove offline termination. Exact reviewed-configuration binding versus normal
+continuous source/workload evolution is unresolved.
+
+**Authorized next delivery:** document this gap, deploy the existing updated
+Factory service and build a matching MSI. Do not implement retooling automation,
+central Start/Stop, blanket enrollment delegation or a remote administration
+command as part of that delivery. Existing production settings/grants and
+disabled execution must be preserved. See the [security architecture](security-architecture.md)
+and the dated updates in [context](development-missions-context.md) and
+[progress notes](development-missions-overnight-log.md).
+
+### November 17 delivery outcome
+
+The retooling gap is recorded without changing the current design. The existing
+updated service is deployed as `cfca26c6-d010-41a7-8d52-9f9e5ff4f279`
+(RuntimeSuccessful), preserving production configuration and grants. Matching
+unsigned MSI `0.1.9` / `workbench-0.1.9-managed-001` is built and statically
+verified; 155 focused Release checks passed. The package was not installed or
+executed on the shared build machine, ICE was skipped, and execution remains
+off. Exact paths/hashes and outstanding dedicated-machine/model acceptance are
+in the [installation handoff](workbench-installation-test.md). No retooling
+automation, central delegation, product-repository mutation or source commit/
+push was performed.

@@ -53,6 +53,69 @@ For ProductZero, enter its name and `chieftn/productionOutput1` as source/issue 
 
 Deploy the service's new configuration endpoints before upgrading a host to this slice. No live deployment or test-machine installation is performed by building it. See the [execution plan](../../docs/development-missions-execution-plan.md) and [REST contract](api/README.md#production-line-configuration-synchronization).
 
+## Continuous development workflow
+
+The local implementation supports one issue at a time: **eligible issue -> Implementation/verification/Alignment -> draft PR -> trusted review/revisions -> merge -> next issue**. The plant selects open GitHub issues in oldest-created order with every configured selection label and an explicit `## Acceptance criteria` bullet list. It excludes pull requests and durable issue claims. An empty queue is idle and is polled again. Discovery stops with an explicit error after 500 scanned results; use narrower selection labels if necessary.
+
+Declare completion in the repository's `workload.json`, separately from issue acceptance criteria and project verification:
+
+```json
+"workflow": {
+  "type": "implementation-alignment",
+  "maximumIterations": 3,
+  "timeoutMinutes": 30,
+  "completionCriterion": "pull_request_merged"
+}
+```
+
+Only `pull_request_merged` is supported. Existing manifests without it remain readable with their original digests, but cannot authorize execution until it is declared. Nonempty repository-defined verification commands are still required; Factory does not invent task-specific checks.
+
+Approval moves the mission to `awaitingMerge`, not completion. Trusted current-head feedback can still trigger bounded revisions. The plant independently checks GitHub's merged flag and the exact owned PR repository, mission marker, branch, base and candidate before accepting `completed`. Factory never merges. Closed-but-unmerged PRs, exhausted review/merge deadlines and unresolved failures retain the issue claim and stop progression for reconciliation. The original deadline also bounds merge waiting; active execution budgets exclude human waits.
+
+The host uses `POST /v1/enrollments/{id}/mission/next`; no fixed issue number is needed. The legacy `assignedIssueNumber` setting remains readable but is ignored. A new mission requires both prior merged completion and confirmed worker termination. Queue requests survive lost responses/restarts, and the next issue uses a newly resolved source snapshot after merge. Repository/line authority, local allowlists, service-process SDK readiness, and independent disabled-by-default execution gates remain required.
+
+The matching service is deployed as `59b0d1c2-7788-4018-8b37-c6455bb8f4fd`; unsigned MSI `0.1.8` / `workbench-0.1.8-queue-001` is built and statically verified for an in-place upgrade. Existing production configuration was preserved. Execution remains disabled; no product repository, installed test machine or model workflow was changed by this rollout. See the [installation handoff](../../docs/workbench-installation-test.md) for the package and remaining activation prerequisites.
+
+### Managed workbench activation
+
+The production-line form now has optional **Workbench execution** settings:
+model identifier, commit author, trusted GitHub reviewers, bounded review/merge
+deadline and an enable switch. Save those once on the line, using its existing
+repository connections and the owner's **Copilot access** authorization. These
+are nonsecret settings delivered through the existing assignment flow, not
+credentials to copy into local JSON. Old line definitions omit `execution`
+entirely, preserving frozen workload and mission digests.
+
+After deploying the matching service and upgrading the client, use **Prepare
+SDK worker**, then **Start line...** in Setup. Start shows the assigned line,
+repositories, model and commit/reviewer identities and requests explicit local
+shell/publication consent. It rechecks the assignment, resolves the workload,
+requires real project verification and `pull_request_merged`, checks preparation,
+and configures the repository allowlist without replacing enrollment. The service
+revalidates SDK readiness and current repository/model authority before claiming
+work. Setup displays the new service process's actual state or blocker.
+
+Consent is bound to the plant membership, line binding and both repositories.
+Moving plants, replacing a binding or changing repositories requires new consent;
+it never silently widens local authority. **Stop line** revokes consent and
+stops owned execution, retaining unresolved mission journals. A line execution
+policy change revokes existing mission authority; disabling the line blocks
+further work. Stop the line before changing its prepared Linux environment.
+
+The Windows service keeps its dedicated identity. Machine certificates authenticate
+it to Factory; existing mission-scoped pipes deliver renewable GitHub/Copilot
+access tokens. App keys, OAuth client secrets and refresh tokens remain in the
+service vault. Neither desktop login nor Windows impersonation is used.
+The commit author is Git metadata, not an authentication identity.
+
+When `Factory:Development:Enabled` is unset, explicitly enabled managed lines
+use their own execution policy; legacy lines remain disabled without their old
+service settings. Explicit `false` remains an operator shutdown override for all
+lines. No per-line App Service setting is required. See the
+[installation handoff](../../docs/workbench-installation-test.md) for the current
+service deployment, MSI and outstanding live acceptance; this feature does not
+by itself prove a live model workflow.
+
 ## Windows installer and registration
 
 Track the current live deployment prerequisites, installer handoff and acceptance results in the [workbench installation test working document](../../docs/workbench-installation-test.md).

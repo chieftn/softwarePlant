@@ -1,8 +1,93 @@
 # Live Workbench Installation Test
 
-Last updated: November 16, 2026 (Pacific).
+Last updated: November 17, 2026 (Pacific).
 
-## Linux bootstrap correction - current candidate 0.1.7
+## Managed execution settings - current candidate 0.1.9
+
+November 17: the user authorized removing manual client execution configuration.
+Setup now includes **Start line...** / **Stop line**;
+model, commit-author and reviewer settings come from the assigned production
+line's new website form. Start asks for local shell/publication permission and
+shows the new service process's actual state/blocker. Repository/Copilot tokens
+continue through Factory's existing mission-scoped credential path, not desktop
+logins or copied tokens.
+
+The user subsequently approved service deployment and an MSI build while
+preserving this local-control model. Service deployment
+`cfca26c6-d010-41a7-8d52-9f9e5ff4f279` is **RuntimeSuccessful**.
+All 24 settings, authentication, both identities, networking and vault grants
+matched preflight. Health/homepage, protected browser/OIDC/PKCE and bearer-only
+API/queue checks passed. No execution setting, line configuration or local
+consent was enabled by the rollout.
+
+Upgrade **in place** with:
+
+`C:\repos\softwarePlant\src\Factory\artifacts\installer\managed-019-001\msi\en-US\Factory.Workbench.0.1.9.msi`
+
+| Candidate | Value |
+|---|---|
+| Runtime release | `workbench-0.1.9-managed-001` |
+| Bytes | 350,880,080 |
+| SHA-256 | `44AF45FD3F40CF4BA718524DF3B495199171B4A3C7661D3D3D77940D47FBB24D` |
+| Static evidence | All 812 embedded files/four cabinets, 527 runtime files and 297 Linux worker files matched sources/manifests. Embedded helper, production profile, pinned Ubuntu/Copilot payloads and Linux x64 ELF headers matched. |
+| Source validation | 155 focused Release checks passed; receipt is `managed-execution-release.trx` in the session artifacts. |
+| Release evidence | `src\Factory\artifacts\installer\managed-019-001\release-handoff.json` and `src\Factory\artifacts\service\managed-execution-20261117-001` |
+
+Preserve enrollment and the owned Linux environment; do not uninstall first.
+Prepare the SDK worker for the new release. Existing preparation was
+tester-reported; this MSI has not been installed by the assistant.
+It is unsigned and ICE validation was explicitly skipped, not passed.
+No installer/helper, WSL, SDK runtime or model was executed on the shared build
+machine.
+
+**Execution remains off.** Real project verification, explicit merged completion
+in the product workload, eligible issues and separately authorized local
+activation/model acceptance remain required. Do not select Start line merely
+because packaging succeeded. Configure the model, commit author and trusted
+reviewers through the production-line website form, not manual local JSON.
+Preserve any explicit global shutdown setting.
+
+Retooling remains an exploration gap: the plant binding affects all members and
+new assignments require renewed local consent. No central Start/Stop, blanket
+enrollment delegation or remote administration command was added. See
+[security architecture](security-architecture.md#11-retooling-gap-and-subsequent-release-scope).
+
+## Continuous queue and merge completion - previous candidate 0.1.8
+
+The matching service is deployed as `59b0d1c2-7788-4018-8b37-c6455bb8f4fd`
+and reports RuntimeSuccessful. It adds service-owned eligible-issue discovery,
+durable queue claims and independent verification of the owned PR's merge.
+Approval alone does not finish a mission; the next issue requires merged
+completion and confirmed worker termination. Closed-but-unmerged PRs retain
+ownership and stop progression.
+
+Upgrade **in place** with
+`C:\repos\softwarePlant\src\Factory\artifacts\installer\sdk-018-001\msi\en-US\Factory.Workbench.0.1.8.msi`,
+then select **3. Prepare SDK worker...** for release
+`workbench-0.1.8-queue-001`. Preserve the existing enrollment, certificate,
+configuration and owned Linux environment; do not uninstall first.
+
+| Candidate | Value |
+|---|---|
+| Bytes | 350,802,256 |
+| SHA-256 | `539C36412FA2372F24A49460CAF34BB26E53ED4D4C38FE8741193C1C3F25E0D1` |
+| Static evidence | All 812 embedded files/four cabinets, 527 runtime files and 297 Linux worker files matched their sources/manifests. Helper, production profile, pinned Ubuntu/Copilot payloads and Linux x64 ELF headers matched. |
+| Source validation | 69 focused queue, merge, mission, repository, SDK-boundary, host-connection and API-contract cases passed. |
+| Service preservation | All 24 settings, authentication, both identities, networking and existing vault grants unchanged. Health/homepage, protected browser/OIDC/PKCE and the new queue route's bearer challenge passed. |
+| Release evidence | `src\Factory\artifacts\installer\sdk-018-001\release-handoff.json` and `src\Factory\artifacts\service\continuous-queue-20261116-002` |
+
+This MSI is unsigned; ICE validation was skipped, not passed. No installer,
+helper, WSL or SDK runtime/model was executed on the shared build machine.
+The tester reported successful worker preparation with `0.1.7`; preparation for
+the new release and a real model/workflow run remain unverified.
+
+**Execution remains disabled.** The product repository was not changed. Before
+activation, its workload needs `workflow.completionCriterion` set to
+`pull_request_merged` and real verification commands; queued issues need the
+configured labels and explicit Acceptance criteria bullets. There is no longer
+a fixed issue-number requirement.
+
+## Linux bootstrap correction - previous candidate 0.1.7
 
 The tester's `0.1.6` preparation reached Linux prerequisite installation under the
 service identity, then failed with `E: Invalid operation update`. Inspection of

@@ -7,33 +7,106 @@ namespace Factory.Plant.Service;
 
 public sealed class DevelopmentMissionSettings
 {
-    public bool Enabled { get; set; }
+    // An explicit false is an operator shutdown override, including line-managed execution.
+    public bool? Enabled { get; set; }
     public string[] Reviewers { get; set; } = [];
     public int ApprovalTimeoutHours { get; set; } = 48;
 
     public void RequireEnabled()
     {
-        if (!Enabled)
+        if (Enabled != true)
             throw new ApiException(503, "development_execution_disabled", "Development mission execution is disabled on the plant service.");
         if (ApprovalTimeoutHours is < 1 or > 168 || Reviewers is not { Length: > 0 and <= 32 } ||
             Reviewers.Any(actor => string.IsNullOrWhiteSpace(actor) || actor.Length > 39 ||
                 !actor.All(character => char.IsAsciiLetterOrDigit(character) || character == '-')))
-            throw new ApiException(503, "development_policy_unconfigured", "Configure trusted reviewers and a bounded human approval deadline.");
+            throw new ApiException(503, "development_policy_unconfigured", "Configure trusted reviewers and a bounded human review/merge deadline.");
+    }
+
+    public DevelopmentMissionSettings Resolve(ProductionLineView? line)
+    {
+        if (Enabled == false || line?.Definition.Execution is null)
+        {
+            RequireEnabled();
+            return this;
+        }
+        var execution = line.Definition.Execution;
+        execution.Validate();
+        var resolved = new DevelopmentMissionSettings
+        {
+            Enabled = execution.Enabled,
+            Reviewers = execution.Reviewers,
+            ApprovalTimeoutHours = execution.ApprovalTimeoutHours
+        };
+        resolved.RequireEnabled();
+        return resolved;
     }
 }
 
 public sealed partial class EnrollmentOperations
 {
+    public async Task<DevelopmentQueueSelection> ClaimNextMissionAsync(string id, ApiCaller caller,
+        DevelopmentQueueRequest request, DevelopmentMissionSettings development, IGitHubRepositoryReader workloads,
+        IGitHubDevelopmentRepository repositories, CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParseExact(request.OperationId, "D", out var operation) || operation == Guid.Empty)
+            throw ApiProblems.Invalid("An immutable queue operation UUID is required.");
+        var configuration = await ConfigurationAsync(id, caller, cancellationToken);
+        if (configuration.ProductionLine is null || !request.Configuration.Matches(configuration))
+            throw new ApiException(409, "configuration_changed", "Queue request was superseded or revoked.");
+        development = development.Resolve(configuration.ProductionLine);
+        var line = configuration.ProductionLine;
+        RequireConfiguredModel(line, request.Model);
+        if (!line.Definition.Policy.AllowShellExecution || !line.Definition.Policy.AllowPublication)
+            throw new ApiException(403, "development_not_permitted", "The assigned line does not permit verified PR execution.");
+        await plants.RequireRepositoryAuthorityAsync(line, cancellationToken, publication: true);
+        await models.RequireAsync(line.Owner, cancellationToken);
+        var scope = Records.EnrollmentScope(id);
+        var retired = await store.ReadAsync(scope, $"development-mission-{request.OperationId}", cancellationToken);
+        if (retired is not null)
+        {
+            var old = Records.Require<DevelopmentMissionRecord>(retired.Record);
+            if (request.WorkloadDigest != old.Mission.Workload.Digest || request.Model != old.Mission.Model ||
+                !request.Configuration.Matches(old.Mission.Workload.Configuration))
+                throw ApiProblems.Conflict();
+            return new(Delivery(old, development));
+        }
+        var slot = await store.ReadAsync(scope, "development-mission", cancellationToken);
+        var previous = slot is null ? null : Records.Require<DevelopmentMissionRecord>(slot.Record);
+        if (previous is not null && (previous.Mission.Id == request.OperationId ||
+            previous.Progress.State != "rejected" && !(previous.Progress.State == "completed" && previous.TerminationConfirmed)))
+        {
+            if (previous.Mission.Id == request.OperationId)
+                return new(await ClaimMissionAsync(id, caller, new(request.OperationId, request.Configuration,
+                    request.WorkloadDigest, previous.Mission.Issue.Number, request.Model),
+                    development, workloads, repositories, cancellationToken));
+            if (previous.Progress.State == "reserving")
+                return new(await ClaimMissionAsync(id, caller, new(previous.Mission.Id,
+                    WorkloadRequest.From(previous.Mission.Workload.Configuration), previous.Mission.Workload.Digest,
+                    previous.Mission.Issue.Number, previous.Mission.Model), development, workloads, repositories, cancellationToken));
+            return new(Delivery(await RequireMissionAsync(id, caller, development, cancellationToken), development));
+        }
+        var taskScope = $"development-issues:{line.Definition.Tasks.Repository.ToLowerInvariant()}";
+        await foreach (var issue in repositories.EligibleIssuesAsync(line.Definition.Tasks, cancellationToken))
+        {
+            if (await store.ReadAsync(taskScope, $"issue-{issue.Number}", cancellationToken) is not null)
+                continue;
+            return new(await ClaimMissionAsync(id, caller, new(request.OperationId, request.Configuration,
+                request.WorkloadDigest, issue.Number, request.Model), development, workloads, repositories, cancellationToken));
+        }
+        return new(null);
+    }
+
     public async Task<DevelopmentMissionDelivery> ClaimMissionAsync(string id, ApiCaller caller, DevelopmentClaimRequest request,
         DevelopmentMissionSettings development, IGitHubRepositoryReader workloads, IGitHubDevelopmentRepository repositories,
         CancellationToken cancellationToken)
     {
-        development.RequireEnabled();
         if (!Guid.TryParseExact(request.OperationId, "D", out var operation) || operation == Guid.Empty || request.IssueNumber <= 0)
             throw ApiProblems.Invalid("An immutable operation UUID and explicitly assigned issue number are required.");
         var configuration = await ConfigurationAsync(id, caller, cancellationToken);
         if (!request.Configuration.Matches(configuration))
             throw new ApiException(409, "configuration_changed", "Mission request was superseded or revoked.");
+        development = development.Resolve(configuration.ProductionLine);
+        RequireConfiguredModel(configuration.ProductionLine!, request.Model);
         var definition = configuration.ProductionLine!.Definition;
         if (!definition.Policy.AllowShellExecution || !definition.Policy.AllowPublication)
             throw new ApiException(403, "development_not_permitted", "The assigned line does not permit verified PR execution.");
@@ -43,6 +116,14 @@ public sealed partial class EnrollmentOperations
         var slot = await store.ReadAsync(scope, "development-mission", cancellationToken);
         var previous = slot is null ? null : Records.Require<DevelopmentMissionRecord>(slot.Record);
         var requestDigest = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request, Records.Json)));
+        var retired = await store.ReadAsync(scope, $"development-mission-{request.OperationId}", cancellationToken);
+        if (retired is not null)
+        {
+            var archived = Records.Require<DevelopmentMissionRecord>(retired.Record);
+            if (archived.RequestDigest != requestDigest)
+                throw ApiProblems.Conflict();
+            return Delivery(archived, development);
+        }
         DevelopmentMissionRecord current;
         if (previous?.Mission.Id == request.OperationId)
         {
@@ -55,7 +136,7 @@ public sealed partial class EnrollmentOperations
         else
         {
             if (previous is not null && previous.Progress.State != "rejected" &&
-                !(previous.Progress.State == "approved" && previous.TerminationConfirmed))
+                !(previous.Progress.State == "completed" && previous.TerminationConfirmed))
                 throw new ApiException(409, "mission_owned", "This workbench already owns a mission; unresolved work cannot be reclaimed or replayed.");
             var resolved = await WorkloadAsync(id, caller, request.Configuration, workloads, cancellationToken);
             if (resolved.Digest != request.WorkloadDigest)
@@ -134,13 +215,22 @@ public sealed partial class EnrollmentOperations
     }
 
     private static DevelopmentMissionDelivery Delivery(DevelopmentMissionRecord mission, DevelopmentMissionSettings development) =>
-        new(mission.Mission, mission.Progress.State, development.Reviewers) { PublicationPending = mission.Progress.PublicationPending };
+        new(mission.Mission, mission.Progress.State, ReviewersFor(mission, development)) { PublicationPending = mission.Progress.PublicationPending };
+
+    private static string[] ReviewersFor(DevelopmentMissionRecord mission, DevelopmentMissionSettings development) =>
+        development.Resolve(mission.Mission.Workload.Configuration.ProductionLine).Reviewers;
+
+    private static void RequireConfiguredModel(ProductionLineView line, string model)
+    {
+        if (line.Definition.Execution is { } execution && execution.Model != model)
+            throw new ApiException(403, "development_not_permitted", "The requested model is not authorized by the assigned production line.");
+    }
 
     private async Task<DevelopmentMissionRecord> RequireMissionAsync(string id, ApiCaller caller, DevelopmentMissionSettings development,
         CancellationToken cancellationToken)
     {
-        development.RequireEnabled();
         var configuration = await ConfigurationAsync(id, caller, cancellationToken);
+        development.Resolve(configuration.ProductionLine);
         var stored = await store.ReadAsync(Records.EnrollmentScope(id), "development-mission", cancellationToken)
             ?? throw new ApiException(404, "mission_not_found", "No mission is owned by this workbench.");
         var mission = Records.Require<DevelopmentMissionRecord>(stored.Record);
@@ -149,6 +239,8 @@ public sealed partial class EnrollmentOperations
         if (configuration.PlantId != original.PlantId || configuration.AssignmentVersion != original.AssignmentVersion ||
             configuration.BindingVersion != original.BindingVersion || configuration.ProductionLine?.Id != original.ProductionLine!.Id ||
             definition is null || !definition.Policy.AllowShellExecution || !definition.Policy.AllowPublication ||
+            (original.ProductionLine.Definition.Execution is { } execution
+                ? !execution.Matches(definition.Execution) : definition.Execution is not null) ||
             definition.Source.Repository != original.ProductionLine.Definition.Source.Repository ||
             definition.Source.ConnectionReference != original.ProductionLine.Definition.Source.ConnectionReference ||
             definition.Tasks.Repository != original.ProductionLine.Definition.Tasks.Repository ||
@@ -187,6 +279,10 @@ public sealed partial class EnrollmentOperations
         IGitHubDevelopmentRepository repositories, CancellationToken cancellationToken)
     {
         var owned = await RequireMissionAsync(id, caller, development, cancellationToken);
+        // Review/merge observation is read-only and must survive GitHub auto-closing the issue.
+        if (owned.Progress.State is "awaitingApproval" or "awaitingMerge" or "approved" &&
+            owned.Progress.PullRequest is not null)
+            return;
         var current = await repositories.IssueAsync(owned.Mission.Workload.Configuration.ProductionLine!.Definition.Tasks,
             owned.Mission.Issue.Number, cancellationToken);
         var configuration = await ConfigurationAsync(id, caller, cancellationToken);
@@ -233,7 +329,7 @@ public sealed partial class EnrollmentOperations
         return review with
         {
             Feedback = review.Feedback.Where(item =>
-            development.Reviewers.Contains(item.Actor, StringComparer.OrdinalIgnoreCase)).ToArray()
+            ReviewersFor(owned, development).Contains(item.Actor, StringComparer.OrdinalIgnoreCase)).ToArray()
         };
     }
 
@@ -263,21 +359,35 @@ public sealed partial class EnrollmentOperations
             progress.Iterations > Math.Min(owned.Mission.Workload.Validate().Workflow.MaximumIterations,
                 owned.Mission.Workload.Configuration.ProductionLine!.Definition.Policy.MaximumIterations) ||
             progress.State is not ("claimed" or "executing" or "publishing" or "awaitingApproval" or "revising" or
-                "approved" or "blocked" or "cancelled" or "needsAttention") || progress.Reason.Length is < 1 or > 256)
+                "awaitingMerge" or "approved" or "completed" or "blocked" or "cancelled" or "needsAttention") || progress.Reason.Length is < 1 or > 256)
             throw ApiProblems.Invalid("Mission progress cannot change its frozen identity or decrease durable counters.");
+        if (owned.Progress.State == "completed" && progress.State != "completed")
+            throw new ApiException(409, "mission_completed", "A completed mission cannot return to execution or review.");
         if (progress.CandidateCommit is not null)
             RepositoryWorkload.Commit(progress.CandidateCommit);
-        if (progress.State is "awaitingApproval" or "approved")
+        if (progress.State is "awaitingApproval" or "awaitingMerge" or "approved" or "completed")
         {
             if (progress.PullRequest is null || progress.CandidateCommit != progress.PullRequest.CandidateCommit ||
+                progress.PublicationPending ||
                 progress.PullRequest.Branch != owned.Mission.Branch ||
+                progress.PullRequest.BaseBranch != owned.Mission.Workload.Configuration.ProductionLine!.Definition.Source.BaseBranch ||
                 progress.PullRequest.Repository != owned.Mission.Workload.Configuration.ProductionLine!.Definition.Source.Repository)
                 throw ApiProblems.Invalid("Approval wait requires the exact owned publication receipt.");
-            if (progress.State == "approved")
+            if (progress.State == "completed")
+            {
+                if (owned.Progress.State is not ("awaitingApproval" or "awaitingMerge" or "approved" or "completed") ||
+                    owned.Progress.PullRequest != progress.PullRequest || owned.Progress.CandidateCommit != progress.CandidateCommit ||
+                    owned.Mission.Workload.Validate().Workflow.CompletionCriterion != "pull_request_merged")
+                    throw new ApiException(409, "completion_missing", "Completion requires the recorded verified publication and declared merge criterion.");
+                var review = await repositories.ReviewAsync(owned.Mission, progress.PullRequest, cancellationToken);
+                if (review.State != "merged" || review.CandidateCommit != progress.CandidateCommit)
+                    throw new ApiException(409, "completion_missing", "GitHub must confirm the exact owned candidate was merged; worker assertions are insufficient.");
+            }
+            if (progress.State is "awaitingMerge" or "approved")
             {
                 var review = await repositories.ReviewAsync(owned.Mission, progress.PullRequest, cancellationToken);
                 var latest = review.Feedback.Where(item => item.CandidateCommit == progress.CandidateCommit &&
-                    development.Reviewers.Contains(item.Actor, StringComparer.OrdinalIgnoreCase) &&
+                    ReviewersFor(owned, development).Contains(item.Actor, StringComparer.OrdinalIgnoreCase) &&
                     item.Kind is "approved" or "changesRequested" or "dismissed")
                     .GroupBy(item => item.Actor, StringComparer.OrdinalIgnoreCase)
                     .Select(group => group.OrderByDescending(item => item.RecordedAt).ThenByDescending(item => item.Id, StringComparer.Ordinal).First()).ToArray();
@@ -299,11 +409,13 @@ public sealed partial class EnrollmentOperations
                 : await RequireMachineAsync(id, caller, cancellationToken);
             var stored = await store.ReadAsync(scope, "development-mission", cancellationToken) ?? throw ApiProblems.Unavailable();
             var current = Records.Require<DevelopmentMissionRecord>(stored.Record);
-            if (current.Mission.Id != progress.MissionId || progress.Iterations < current.Progress.Iterations ||
+            if (current.Mission.Id != progress.MissionId || current.Progress != owned.Progress ||
+                progress.Iterations < current.Progress.Iterations ||
                 progress.ActiveMilliseconds < current.Progress.ActiveMilliseconds)
                 throw ApiProblems.Conflict();
             if (await store.CommitAsync(scope, [new(enrollment.Record, enrollment.ETag),
-                new(current with { Progress = progress }, stored.ETag),
+                new(current with { Progress = progress,
+                    TerminationConfirmed = current.Progress.State == "completed" && current.TerminationConfirmed }, stored.ETag),
                 new(new OperationRecord { Id = $"mission-progress-{operation}", ScopeId = scope, Digest = digest,
                     RecordedAt = clock.GetUtcNow() })], cancellationToken))
                 return;

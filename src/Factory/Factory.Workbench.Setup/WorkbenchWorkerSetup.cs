@@ -20,14 +20,18 @@ public sealed class WorkbenchWorkerSetup(string root, IWorkbenchService service)
             if (installation.State != "installed")
                 throw new InvalidDataException("Recover the installed runtime before preparing its Linux environment.");
             var configuration = ConfigurationStore.Read(root);
-            if (operation != "remove" && (configuration.Development?.Enabled == true ||
+            if (operation != "remove" && (configuration.Development?.Enabled == true || configuration.ExecutionConsent is not null ||
                 File.Exists(Path.Combine(LocalState.RuntimeDirectory(root), "active-development-worker.json"))))
                 throw new InvalidOperationException("Stop and reconcile mission execution before changing the Linux environment.");
             await service.StopAsync(installation, cancellationToken);
             if (File.Exists(Path.Combine(LocalState.RuntimeDirectory(root), "active-development-worker.json")))
                 throw new IOException("Prior mission shutdown is unresolved. Preserve its journal before changing the Linux environment.");
-            if (operation == "remove" && configuration.Development is not null)
-                ConfigurationStore.Save(root, configuration with { Development = configuration.Development with { Enabled = false } });
+            if (operation == "remove")
+                ConfigurationStore.Save(root, configuration with
+                {
+                    ExecutionConsent = null,
+                    Development = configuration.Development is { } development ? development with { Enabled = false } : null
+                });
             if (operation == "prepare")
                 ConfigurationStore.Save(root, configuration with
                 {

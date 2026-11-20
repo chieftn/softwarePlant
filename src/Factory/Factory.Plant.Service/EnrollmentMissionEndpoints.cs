@@ -24,6 +24,17 @@ public static partial class PlantEndpoints
             return Results.Json(await operations.ClaimMissionAsync(PlantId(operationId), ApiCaller.Read(context.User),
                 request, development, workloads, repositories, cancellationToken), Json);
         });
+        missions.MapPost("/next", async (string operationId, HttpContext context, EnrollmentOperations operations,
+            DevelopmentMissionSettings development, IGitHubRepositoryReader workloads,
+            IGitHubDevelopmentRepository repositories, CancellationToken cancellationToken) =>
+        {
+            NoQuery(context);
+            var request = await BodyAsync<DevelopmentQueueRequest>(context, cancellationToken);
+            if (OperationKey(context) != request.OperationId)
+                throw ApiProblems.Invalid("Queue Idempotency-Key must equal the immutable operation ID.");
+            return Results.Json(await operations.ClaimNextMissionAsync(PlantId(operationId), ApiCaller.Read(context.User),
+                request, development, workloads, repositories, cancellationToken), Json);
+        });
         missions.MapGet("", async (string operationId, HttpContext context, EnrollmentOperations operations,
             DevelopmentMissionSettings development, CancellationToken cancellationToken) =>
         {

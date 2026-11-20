@@ -8,7 +8,9 @@ namespace Factory.Contracts;
 
 public sealed record WorkloadAgent(string Instructions, string WorkspaceAccess);
 public sealed record WorkloadAgents(WorkloadAgent Implementation, WorkloadAgent Alignment);
-public sealed record WorkloadWorkflow(string Type, int MaximumIterations, int TimeoutMinutes);
+// Legacy manifests remain readable without altering their frozen JSON; missions require an explicit criterion.
+public sealed record WorkloadWorkflow(string Type, int MaximumIterations, int TimeoutMinutes,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CompletionCriterion = null);
 public sealed record WorkloadCommand(string Executable, string[] Arguments, string WorkingDirectory, int TimeoutSeconds);
 public sealed record WorkloadCommands(WorkloadCommand[] Commands);
 
@@ -63,6 +65,8 @@ public sealed record RepositoryWorkload(
         ContractValidation.Require(Workflow is not null && Workflow.Type == "implementation-alignment" &&
             Workflow.MaximumIterations is >= 1 and <= 20 && Workflow.TimeoutMinutes is >= 1 and <= 240,
             "Unsupported or unbounded workload workflow.");
+        ContractValidation.Require(Workflow!.CompletionCriterion is null or "pull_request_merged",
+            "Only pull_request_merged workflow completion is supported.");
         ValidateCommands(Preparation);
         ValidateCommands(Verification);
         ContractValidation.Require(RequiredOutputs is not null && RequiredOutputs.SequenceEqual(

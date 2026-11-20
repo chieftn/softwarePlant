@@ -189,6 +189,65 @@ Sources: [SDK GitHub OAuth](https://docs.github.com/en/copilot/how-tos/copilot-s
 [SDK authentication and rotating session tokens](https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/authenticate),
 [GitHub App user tokens/PKCE/offline access](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
 
+### Continuous issue queue and merged completion
+
+The authorized service rollout
+`59b0d1c2-7788-4018-8b37-c6455bb8f4fd` reached RuntimeSuccessful on November 16,
+2026. It adds `mission/next`, eligible-issue discovery and durable selection,
+plus independent GitHub verification of explicit `pull_request_merged`
+completion. Approval alone never permits another claim; the prior worker's
+termination must also be confirmed. Existing task/source adapter boundaries and
+disabled-by-default execution remain in place.
+
+All 24 App Service settings, browser/API authentication, both managed identities,
+Key Vault selection/grants and hosting/network fingerprints matched preflight.
+No infrastructure template, permission, credential or execution setting was
+changed. Health/homepage, protected browser code/PKCE challenges and the new
+queue route's anonymous 401/Bearer response passed. These checks do not claim a
+live model workflow.
+
+The self-contained Linux service archive's 387 entries matched the publish tree;
+69 focused contract/service/worker/host cases passed. Evidence is under
+`artifacts\service\continuous-queue-20261116-002`, with the previous
+`copilot-auth-resume-20261116-001` archive retained for code rollback.
+Matching MSI `0.1.8` is built but not installed by the assistant. The product
+workload still needs completion/verification declarations and eligible issues
+before separate execution activation.
+
+### Managed workbench activation - November 17 deployment
+
+Local changes add optional execution settings to the existing production-line
+definition/form and guided Start/Stop line actions to Workbench Setup.
+The approved code-only deployment `cfca26c6-d010-41a7-8d52-9f9e5ff4f279`
+is RuntimeSuccessful. The self-contained Linux archive has 387 verified entries,
+includes .NET/ASP.NET Core `10.0.15`, and is recorded under
+`artifacts\service\managed-execution-20261117-001`. Its SHA-256 is
+`A1E6A8744A61A6B508664D84BC441BA019AC7B74D40FCFF76FFD72B95E662BAA`.
+
+All 24 App Service settings, browser/API authentication, both managed identities,
+networking and existing vault grants matched preflight. Anonymous health/browser
+OIDC/PKCE and protected API/queue challenge checks passed. No Azure permission,
+credential migration, line configuration, execution setting or model call was
+changed/performed. The prior `continuous-queue-20261116-002` archive is retained
+as code rollback evidence; it does not understand new managed execution fields,
+so any later rollback after those fields are used needs compatibility review.
+
+Matching unsigned MSI `0.1.9` / `workbench-0.1.9-managed-001` is built and
+statically verified, not installed by the assistant. MSI `0.1.8` lacks these
+actions. In-place upgrade and preparation on the dedicated test machine precede
+separately approved live activation. Retooling automation, central operational
+Start/Stop and blanket enrollment delegation remain deferred.
+
+An unset `Factory:Development:Enabled` now permits only explicitly enabled
+line-managed execution, with the line's model/review policy and independent
+local consent. Existing lines without an execution definition remain disabled
+unless legacy service policy explicitly enables them. Explicit `false` remains
+a global shutdown override; do not remove or change an existing override as a
+side effect of deployment. Review it only as part of separately approved
+activation. Legacy service reviewer/deadline settings continue to serve legacy
+lines; managed lines receive those values through the normal owner-scoped form.
+No new secret, per-device token or user impersonation is needed.
+
 ### Private cross-region Cosmos access
 
 [`backend-peering.bicep`](backend-peering.bicep) connects existing, non-overlapping application and Cosmos VNets in the same resource group. Supply `appVnetName` and `cosmosVnetName`. It creates both peering directions with virtual-network access enabled and forwarding/gateway transit disabled. It does not create a web app or database, grant data access, or enable public Cosmos access. Cross-region peering incurs traffic charges.

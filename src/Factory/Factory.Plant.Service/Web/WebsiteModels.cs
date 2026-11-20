@@ -35,6 +35,13 @@ public sealed class ProductionLineForm
     public bool AllowPublication { get; set; }
     public int MaximumIterations { get; set; } = 3;
     public int TimeoutMinutes { get; set; } = 30;
+    public bool ConfigureExecution { get; set; }
+    public bool ExecutionEnabled { get; set; }
+    public string? Model { get; set; }
+    public string? GitAuthorName { get; set; }
+    public string? GitAuthorEmail { get; set; }
+    public string? Reviewers { get; set; }
+    public int ApprovalTimeoutHours { get; set; } = 48;
 
     public ProductionLineWriteRequest Definition() => new()
     {
@@ -43,7 +50,11 @@ public sealed class ProductionLineForm
         Source = new("github", SourceRepository.Trim(), BaseBranch, WorkloadPath, SourceConnection),
         Tasks = new("github-issues", TaskRepository.Trim(), TaskConnection,
             (RequiredLabels ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)),
-        Policy = new(AllowShellExecution, AllowPublication, MaximumIterations, TimeoutMinutes)
+        Policy = new(AllowShellExecution, AllowPublication, MaximumIterations, TimeoutMinutes),
+        Execution = ConfigureExecution ? new(ExecutionEnabled, (Model ?? "").Trim(), (GitAuthorName ?? "").Trim(),
+            (GitAuthorEmail ?? "").Trim(),
+            (Reviewers ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
+            ApprovalTimeoutHours) : null
     };
 
     public static ProductionLineForm From(ProductionLineView line) => new()
@@ -62,7 +73,14 @@ public sealed class ProductionLineForm
         AllowShellExecution = line.Definition.Policy.AllowShellExecution,
         AllowPublication = line.Definition.Policy.AllowPublication,
         MaximumIterations = line.Definition.Policy.MaximumIterations,
-        TimeoutMinutes = line.Definition.Policy.TimeoutMinutes
+        TimeoutMinutes = line.Definition.Policy.TimeoutMinutes,
+        ConfigureExecution = line.Definition.Execution is not null,
+        ExecutionEnabled = line.Definition.Execution?.Enabled ?? false,
+        Model = line.Definition.Execution?.Model,
+        GitAuthorName = line.Definition.Execution?.GitAuthorName,
+        GitAuthorEmail = line.Definition.Execution?.GitAuthorEmail,
+        Reviewers = line.Definition.Execution is { } execution ? string.Join(", ", execution.Reviewers) : null,
+        ApprovalTimeoutHours = line.Definition.Execution?.ApprovalTimeoutHours ?? 48
     };
 }
 

@@ -41,8 +41,10 @@ public sealed record DevelopmentMission(string SchemaVersion, string Id, Resolve
         Issue.Validate(Workload.Configuration.ProductionLine!.Definition.Tasks);
         ContractValidation.Require(definition.Verification.Commands.Length > 0,
             "Project verification commands are required before claiming execution.");
+        ContractValidation.Require(definition.Workflow.CompletionCriterion == "pull_request_merged",
+            "Declare workflow.completionCriterion as pull_request_merged before claiming execution.");
         ContractValidation.Require(ApprovalDeadline > CreatedAt && ApprovalDeadline <= CreatedAt.AddDays(7),
-            "Human approval wait must be bounded to at most seven days.");
+            "Human review/merge wait must be bounded to at most seven days.");
         ContractValidation.Require(Digest == ComputeDigest(Id, Workload, Issue, Model, CreatedAt, ApprovalDeadline),
             "Mission digest does not match its frozen inputs.");
         ContractValidation.Require(JsonSerializer.SerializeToUtf8Bytes(this, RepositoryWorkload.Json).Length <= 96 * 1024,
@@ -107,6 +109,12 @@ public sealed record RepositoryAccessCredential(string Repository, string Token,
 
 public sealed record DevelopmentClaimRequest(string OperationId, WorkloadRequest Configuration,
     string WorkloadDigest, long IssueNumber, string Model);
+
+public sealed record DevelopmentQueueRequest(string OperationId, WorkloadRequest Configuration,
+    string WorkloadDigest, string Model);
+
+public sealed record DevelopmentQueueSelection(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DevelopmentMissionDelivery? Mission);
 
 public sealed record DevelopmentMissionState(DevelopmentMission Mission, string State, int Iterations,
     long ActiveMilliseconds, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? CandidateCommit, CandidateVerification[] Verification,

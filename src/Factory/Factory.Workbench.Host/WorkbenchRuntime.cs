@@ -57,7 +57,7 @@ public static class WorkbenchRuntime
                     {
                         if (diagnostic)
                             throw new InvalidOperationException("Worker preparation requires the Windows service, not a diagnostic host.");
-                        if (configuration.Development?.Enabled == true)
+                        if (configuration.Development?.Enabled == true || configuration.ExecutionConsent is not null)
                             throw new InvalidOperationException("Disable mission execution before preparing the Linux environment.");
                         await ProcessWorkerSetup(request);
                         processedWorkerRequest = request.Id;
@@ -88,9 +88,8 @@ public static class WorkbenchRuntime
                         {
                             PlantConnected = true,
                             ConfigurationObservation = connection.ConfigurationObservation,
-                            State = configuration.Development?.Enabled == true ? development.State : "notReady",
-                            Reason = configuration.Development?.Enabled == true ? development.Reason :
-                                connection.ConfigurationObservation?.Reason ?? "Factory connected; execution remains disabled."
+                            State = development.State,
+                            Reason = development.Reason
                         };
                     }
                     catch (Exception error) when (error is HttpRequestException or IOException or MsalException or CryptographicException ||

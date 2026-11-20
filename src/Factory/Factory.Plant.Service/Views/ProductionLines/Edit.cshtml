@@ -51,13 +51,27 @@
         </select>
         <label asp-for="RequiredLabels">Required approval/selection labels (comma-separated)</label><input asp-for="RequiredLabels" required />
         <h2>Approved execution limits</h2>
-        <p>These are upper bounds, not permission to bypass local policy. Task execution is not implemented yet.</p>
+        <p>These are upper bounds, not permission to bypass local policy. Each workbench requires explicit local consent.</p>
         <label><input asp-for="AllowShellExecution" /> Allow shell execution</label>
         <label><input asp-for="AllowPublication" /> Allow draft-PR publication</label>
         <label asp-for="MaximumIterations">Maximum implementation/alignment iterations</label>
         <input asp-for="MaximumIterations" min="1" max="20" required />
         <label asp-for="TimeoutMinutes">Mission timeout (minutes)</label>
         <input asp-for="TimeoutMinutes" min="1" max="240" required />
+        <h2>Workbench execution</h2>
+        <p>Configure once for the line. Assigned workbenches receive these nonsecret settings automatically.
+            Repository access uses the selected connections; model access uses the line owner's
+            <a href="/copilot-access">connected Copilot account</a>. Never enter tokens here.</p>
+        <label><input asp-for="ConfigureExecution" /> Manage execution settings through this production line</label>
+        <label><input asp-for="ExecutionEnabled" /> Enable this line for locally authorized workbenches</label>
+        <label asp-for="Model">Copilot model identifier</label><input asp-for="Model" maxlength="128" />
+        <label asp-for="GitAuthorName">Commit author name</label><input asp-for="GitAuthorName" maxlength="128" />
+        <label asp-for="GitAuthorEmail">Commit author email</label><input asp-for="GitAuthorEmail" maxlength="254" />
+        <label asp-for="Reviewers">Trusted GitHub reviewers (comma-separated usernames)</label><input asp-for="Reviewers" />
+        <label asp-for="ApprovalTimeoutHours">Human review/merge deadline (hours)</label>
+        <input asp-for="ApprovalTimeoutHours" min="1" max="168" />
+        <p>After preparing the SDK worker, select Start line in Factory Workbench Setup to approve local execution.
+            Disabling this line revokes mission authority. Factory never merges PRs automatically.</p>
         <button class="button" type="submit">Save definition</button>
     </form>
 </section>

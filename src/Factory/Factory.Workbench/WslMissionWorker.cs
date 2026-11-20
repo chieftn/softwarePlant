@@ -102,6 +102,8 @@ public sealed class WslMissionWorker : IDisposable
         return current.PlantId == original.PlantId && current.AssignmentVersion == original.AssignmentVersion &&
             current.BindingVersion == original.BindingVersion && current.ProductionLine?.Id == original.ProductionLine!.Id &&
             definition is not null && definition.Policy.AllowShellExecution && definition.Policy.AllowPublication &&
+            (original.ProductionLine.Definition.Execution is { } execution
+                ? execution.Matches(definition.Execution) : definition.Execution is null) &&
             definition.Source.Repository == original.ProductionLine.Definition.Source.Repository &&
             definition.Source.ConnectionReference == original.ProductionLine.Definition.Source.ConnectionReference &&
             definition.Tasks.Repository == original.ProductionLine.Definition.Tasks.Repository &&
@@ -147,7 +149,7 @@ public sealed class WslMissionWorker : IDisposable
             if (!started.Task.IsCompleted)
                 started.TrySetException(new IOException("Worker exited before proving process ownership."));
             if (process.ExitCode != 0)
-                throw new IOException("Owned worker exited without approved completion; reconcile retained state.");
+                throw new IOException("Owned worker exited without merged completion; reconcile retained state.");
         }
         catch
         {

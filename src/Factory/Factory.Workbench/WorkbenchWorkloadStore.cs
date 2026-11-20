@@ -49,7 +49,8 @@ public static class WorkbenchWorkloadStore
         try
         {
             var workload = Read(root, binding, state.Configuration);
-            if (workload is null)
+            if (workload is null || workload.Validate().Verification.Commands.Length == 0 ||
+                workload.Validate().Workflow.CompletionCriterion is null)
             {
                 workload = await plant.SendAsync<ResolvedRepositoryWorkload>(HttpMethod.Post,
                     $"v1/enrollments/{binding.EnrollmentId}/workload", WorkloadRequest.From(state.Configuration),
@@ -59,9 +60,11 @@ public static class WorkbenchWorkloadStore
             var definition = workload.Validate();
             reason = definition.Verification.Commands.Length == 0
                 ? "Repository specs pinned. Project verification commands are missing; execution remains disabled."
-                : ConfigurationStore.Read(root).Development?.Enabled == true
-                    ? "Repository specs pinned. Environment readiness remains unverified; owned mission execution is reported separately."
-                    : "Repository specs pinned and validated. Worker execution and service-owned model authentication remain disabled.";
+                : definition.Workflow.CompletionCriterion != "pull_request_merged"
+                    ? "Repository specs pinned. Declare workflow.completionCriterion as pull_request_merged before execution."
+                : WorkbenchExecutionConfiguration.Resolve(ConfigurationStore.Read(root), state.Configuration).Development?.Enabled == true
+                    ? "Repository specs pinned. Worker readiness and owned mission execution are reported separately."
+                    : "Repository specs pinned. Configure the line, prepare the SDK worker and select Start line in Setup.";
         }
         catch (PlantConnectionException error) when (error.Code is "repository_connection_unconfigured" or
             "repository_not_permitted" or "repository_access_failed" or "repository_access_timeout" or

@@ -23,7 +23,7 @@ public sealed class RepositoryWorkloadTests
     {
         ["workload.json"] = JsonSerializer.Serialize(new RepositoryWorkload("workload.schema.json", "1",
             "fixture-development", "1.0.0", new(new("agents/implementation.md", "read-write"),
-                new("agents/alignment.md", "read-only")), new("implementation-alignment", 3, 30),
+                new("agents/alignment.md", "read-only")), new("implementation-alignment", 3, 30, "pull_request_merged"),
             new([]), new(checks ? [new("dotnet", ["test"], ".", 60)] : []),
             ["candidate", "verification-evidence", "alignment-report"]), RepositoryWorkload.Json),
         ["workload.schema.json"] = """{"type":"object"}""",
@@ -47,12 +47,27 @@ public sealed class RepositoryWorkloadTests
     [InlineData("\"maximumIterations\":3", "\"maximumIterations\":0")]
     [InlineData("\"version\":\"1.0.0\"", "\"version\":\"01.0.0\"")]
     [InlineData("\"type\":\"implementation-alignment\"", "\"type\":\"arbitrary-code\"")]
+    [InlineData("\"completionCriterion\":\"pull_request_merged\"", "\"completionCriterion\":\"pull_request_approved\"")]
     public void InvalidOrDuplicateContractsAreRejected(string before, string after) =>
         Assert.Throws<ContractValidationException>(() => RepositoryWorkload.Parse(Files()["workload.json"].Replace(before, after)));
 
     [Fact]
     public void UnknownPropertiesAreRejected() => Assert.Throws<JsonException>(() =>
         RepositoryWorkload.Parse(Files()["workload.json"].Replace("\"schemaVersion\":", "\"secret\":\"not-allowed\",\"schemaVersion\":")));
+
+    [Fact]
+    public void LegacyWorkloadsRemainReadableWithoutSilentlyAddingCompletionOrAuthorizingExecution()
+    {
+        var files = Files(true);
+        files["workload.json"] = files["workload.json"].Replace(",\"completionCriterion\":\"pull_request_merged\"", "");
+        var resolved = ResolvedRepositoryWorkload.Create(Configuration(), new('a', 40), files);
+        var definition = resolved.Validate();
+        Assert.Null(definition.Workflow.CompletionCriterion);
+        Assert.Equal(files["workload.json"], JsonSerializer.Serialize(definition, RepositoryWorkload.Json));
+        var mission = DevelopmentMission.Create(PlantApiTests.Key(), resolved, DevelopmentMissionTests.Mission().Issue,
+            "test-model", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(1));
+        Assert.Throws<ContractValidationException>(mission.Validate);
+    }
 
     [Fact]
     public async Task GitHubAppReadsOnlyConfiguredRepositoryAndPinsEveryFileToCommitTree()

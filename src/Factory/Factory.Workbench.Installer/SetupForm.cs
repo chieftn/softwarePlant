@@ -37,16 +37,22 @@ internal sealed class SetupForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         var layout = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false,
-            Padding = new Padding(20), AutoScroll = true
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Padding = new Padding(20),
+            AutoScroll = true
         };
         layout.Controls.Add(new Label { Text = "Install and enroll this device in Factory", AutoSize = true, Font = new Font(Font, FontStyle.Bold) });
         layout.Controls.Add(profileLabel);
         layout.Controls.Add(new Label
         {
             Text = "Development build: install only from a trusted source. Enrollment requires Factory.EnrollmentAdministrator.\n" +
-                "Assign the enrolled device to a plant through the website. Prepare the SDK worker here; mission execution is enabled separately.",
-            AutoSize = true, MaximumSize = new Size(700, 0), Margin = new Padding(0, 15, 0, 15)
+                "Assign the enrolled device to a plant and configure its production line through the website. " +
+                "Prepare the SDK worker here, then select Start line to grant local execution permission.",
+            AutoSize = true,
+            MaximumSize = new Size(700, 0),
+            Margin = new Padding(0, 15, 0, 15)
         });
         layout.Controls.Add(signIn);
         layout.Controls.Add(install);
@@ -58,6 +64,10 @@ internal sealed class SetupForm : Form
         var prepareWorker = new Button { Text = "3. Prepare SDK worker...", AutoSize = true };
         prepareWorker.Click += async (_, _) => await Run(PrepareWorkerAsync, "worker-preparation");
         actions.Controls.Add(prepareWorker);
+        var startLine = new Button { Text = "4. Start line...", AutoSize = true };
+        startLine.Click += async (_, _) => await Run(StartLineAsync, "line-start");
+        actions.Controls.Add(startLine);
+        AddAction("Stop line", () => new WorkbenchExecutionSetup(root, service).StopAsync(lifetime.Token));
         layout.Controls.Add(actions);
         layout.Controls.Add(DiagnosticControls.Create(this, diagnostics));
         layout.Controls.Add(status);
@@ -206,23 +216,7 @@ internal sealed class SetupForm : Form
         }
         var started = DateTimeOffset.UtcNow;
         await Lifecycle.StartAsync(lifetime.Token);
-        using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token))
-        {
-            deadline.CancelAfter(TimeSpan.FromSeconds(75));
-            while (true)
-            {
-                deadline.Token.ThrowIfCancellationRequested();
-                if (File.Exists(LocalState.RuntimeStatusPath(root)))
-                {
-                    var observed = LocalState.Read<WorkbenchRuntimeStatus>(LocalState.RuntimeStatusPath(root));
-                    if (observed.ObservedAt >= started && observed.PlantConnected &&
-                        service.RunningProcessId(LocalState.ReadInstallation(root)) == observed.ProcessId)
-                        break;
-                    status.Text = "Waiting for service-account authentication: " + observed.Reason;
-                }
-                await Task.Delay(TimeSpan.FromSeconds(1), deadline.Token);
-            }
-        }
+        await WaitForConnectionAsync(started);
         status.Text = $"Enrolled and connected to Factory: {binding.WorkbenchId}.\n" +
             "Use Enrollments in the Factory website to assign this device to a plant. Next: Prepare SDK worker.";
         diagnostics.Record("service-authentication", "connected", enrollmentId: binding.EnrollmentId);
@@ -260,7 +254,62 @@ internal sealed class SetupForm : Form
         await new WorkbenchWorkerSetup(root, service).PrepareAsync(
             progress => status.Text = $"{progress.Stage}: {progress.Detail}", lifetime.Token);
         status.Text = "SDK worker prepared. Worker/SDK startup and full Linux shutdown passed under the service identity.\n" +
-            "Repository and model credentials will be supplied by Factory for an authorized mission. No model call or workflow has started.";
+            "Repository and model credentials will be supplied by Factory for an authorized mission. No model call or workflow has started. " +
+            "Next: configure the assigned production line in Factory, then select Start line.";
+    }
+
+    private async Task StartLineAsync()
+    {
+        var configuration = ConfigurationStore.Read(root);
+        var binding = BindingStore.Read(root);
+        using var certificate = MachineCertificates.Read(binding.CertificateThumbprint);
+        using var machineHttp = PlantHttp.Create(configuration.PlantServiceUrl);
+        var tokens = new CertificateTokenSource(configuration, binding, certificate);
+        var plant = new PlantHttp(machineHttp, tokens.TokenAsync, tokens.RequestFreshToken);
+        var current = await plant.ReadAsync<WorkbenchLineConfiguration>(
+            $"v1/enrollments/{binding.EnrollmentId}/configuration", lifetime.Token);
+        var line = current.ProductionLine ?? throw new InvalidOperationException("Assign this workbench to a plant with a production line in Factory first.");
+        var execution = line.Definition.Execution ??
+            throw new InvalidOperationException("Configure managed execution settings on this production line in the Factory website first.");
+        if (!execution.Enabled)
+            throw new InvalidOperationException("Enable this production line's execution settings in Factory first.");
+        line.Definition.Validate();
+        if (MessageBox.Show(this,
+            $"Start continuous work on {line.Definition.Name}?\n\n" +
+            $"Source: {line.Definition.Source.Repository}\nIssues: {line.Definition.Tasks.Repository}\n" +
+            $"Model: {execution.Model}\nCommit author: {execution.GitAuthorName} <{execution.GitAuthorEmail}>\n" +
+            $"Trusted reviewers: {string.Join(", ", execution.Reviewers)}\n\n" +
+            "This permits repository instructions and project commands to run locally and publish draft PRs. " +
+            "Factory delegates the line owner's connected repository and Copilot authority; no desktop login or tokens are copied.\n\n" +
+            "The line selects eligible issues continuously, advancing only after its PR is merged and its worker has stopped. " +
+            "Factory never merges automatically. A plant, line binding or repository change requires new local consent.",
+            "Authorize and start line", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+        var started = DateTimeOffset.UtcNow;
+        await new WorkbenchExecutionSetup(root, service).StartAsync(plant, binding, current, lifetime.Token);
+        status.Text = "Local execution consent saved. Waiting for the service to report line readiness...";
+        var observed = await WaitForConnectionAsync(started);
+        status.Text = $"Local execution authorized. Workbench status: {observed.State}.\n{observed.Reason}\n" +
+            "Factory supplies short-lived credentials for authorized missions. Use Stop line to revoke local execution permission.";
+    }
+
+    private async Task<WorkbenchRuntimeStatus> WaitForConnectionAsync(DateTimeOffset started)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(75));
+        while (true)
+        {
+            deadline.Token.ThrowIfCancellationRequested();
+            if (File.Exists(LocalState.RuntimeStatusPath(root)))
+            {
+                var observed = LocalState.Read<WorkbenchRuntimeStatus>(LocalState.RuntimeStatusPath(root));
+                if (observed.ObservedAt >= started && observed.PlantConnected &&
+                    service.RunningProcessId(LocalState.ReadInstallation(root)) == observed.ProcessId)
+                    return observed;
+                status.Text = "Waiting for service-account authentication: " + observed.Reason;
+            }
+            await Task.Delay(TimeSpan.FromSeconds(1), deadline.Token);
+        }
     }
 
     private Task UnenrollAsync()
@@ -270,7 +319,8 @@ internal sealed class SetupForm : Form
             throw new InvalidDataException("Use Installed Apps or the original MSI to uninstall this package.");
         using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("msiexec.exe")
         {
-            Arguments = $"/x {{{id:D}}}", UseShellExecute = true
+            Arguments = $"/x {{{id:D}}}",
+            UseShellExecute = true
         }) ?? throw new IOException("Windows Installer could not start.");
         closing = true;
         return Task.CompletedTask;
@@ -298,7 +348,9 @@ internal sealed class SetupForm : Form
         catch (OperationCanceledException)
         {
             var logged = diagnostics.TryRecordFailure(stage, "cancelled");
-            status.Text = "Software installed; enrollment/connection verification incomplete or cancelled. Progress is retained. Resume setup; do not delete identity or journals.";
+            status.Text = stage == "line-start"
+                ? "Line startup verification was interrupted. Local consent may already be saved; use Stop line to revoke it. Machine identity and journals are retained."
+                : "Software installed; enrollment/connection verification incomplete or cancelled. Progress is retained. Resume setup; do not delete identity or journals.";
             if (!logged)
                 status.Text += "\nThe diagnostic log could not be written. Check directory access and the MSI log.";
         }

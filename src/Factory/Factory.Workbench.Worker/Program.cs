@@ -123,12 +123,12 @@ internal static class WorkerProgram
             while (!lifetime.IsCancellationRequested)
             {
                 state = await runner.AdvanceAsync(state, lifetime.Token);
-                if (state.State != "awaitingApproval")
+                if (state.State is not ("awaitingApproval" or "awaitingMerge" or "approved"))
                     break;
                 await Task.Delay(TimeSpan.FromSeconds(15), lifetime.Token);
             }
             Emit(new("result", request.Mission.Id, state.State, JsonSerializer.SerializeToElement(new { state.State, state.Reason })));
-            return state.State == "approved" ? 0 : 1;
+            return state.State == "completed" ? 0 : 1;
         }
         catch (Exception error)
         {

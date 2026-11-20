@@ -208,6 +208,34 @@ The runtime reads current membership from Factory instead of treating a locally 
 
 Provisioning and retirement are durable background operations, not request-scoped tasks. Directory creates are checkpointed and uncertain outcomes reconciled rather than blindly repeated. Provisioning failures can require `needsAttention`; retirement failures can require `retirementNeedsAttention` while access remains revoked. Disabling new enrollment does not disable existing connections or retirement; retain the provisioner configuration for directory cleanup.
 
+### Retooling: gap between assignment and execution
+
+Retooling means moving a workbench from its current production-line configuration
+to another configuration that it is both authorized and prepared to execute.
+It changes execution configuration, not enrollment identity. Assignment expresses
+the desired destination; it is not proof that the transition succeeded.
+
+The current implementation has pieces of this transition: versioned assignments,
+revocation and worker-stop handling, preparation/readiness checks, scoped
+credentials and local execution consent. It does not yet coordinate them as a
+complete, observable retooling operation.
+
+An eventual operation must account for stopping/reconciling owned work, approval
+of the target configuration and permissions, tools/configuration/credential
+changes, readiness evidence and interrupted/failed transitions. A stop timeout
+does not release a claim or prove an offline machine stopped. A changed desired
+assignment does not by itself establish the machine's applied and approved state.
+
+This is an open gap, not authorization for another subsystem or an enrollment
+redesign. Plant-wide bindings and local Start/Stop consent remain unchanged.
+Central delegation and independent remote administration are alternatives, not
+implemented capabilities. Temporary authority to add, remove or retool selected
+machines would authorize the management change; it need not make the resulting
+membership or assignment temporary.
+
+See [the security discussion](security-architecture.md#10-recorded-discussion-central-control-retooling-and-the-decision)
+and [the execution-plan gap record](development-missions-execution-plan.md#retooling-gap---november-17-2026).
+
 ### Current Storage Boundaries
 
 Cosmos stores independent documents in database `plant`, container `records`, partitioned by `/scopeId`.

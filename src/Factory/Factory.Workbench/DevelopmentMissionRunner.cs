@@ -35,7 +35,7 @@ public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repos
             throw new InvalidDataException("Mission counters and feedback journals are invalid.");
         if (reviewers.Length == 0 || reviewers.Any(string.IsNullOrWhiteSpace))
             throw new InvalidDataException("An explicit trusted reviewer allowlist is required.");
-        if (state.State is "approved" or "blocked" or "cancelled" or "needsAttention")
+        if (state.State is "completed" or "blocked" or "cancelled" or "needsAttention")
             return state;
         if (state.State is "executing" or "publishing")
             return await Save(state with
@@ -53,10 +53,10 @@ public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repos
                 Reason = "Mission authorization unavailable; no agent started. Reconcile the retained claim before retrying."
             });
         }
-        if (state.State == "awaitingApproval")
+        if (state.State is "awaitingApproval" or "awaitingMerge" or "approved")
         {
             if (clock.GetUtcNow() >= state.Mission.ApprovalDeadline)
-                return await Save(state with { State = "blocked", Reason = "Human review deadline exhausted; no automatic merge or new execution." });
+                return await Save(state with { State = "blocked", Reason = "Human review/merge deadline exhausted; no automatic merge or new execution." });
             var pullRequest = state.PullRequest ?? throw new InvalidDataException("Approval wait has no recorded pull request.");
             DevelopmentReview review;
             try { review = await repository.ReviewAsync(pullRequest, cancellationToken); }
@@ -69,12 +69,18 @@ public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repos
                     Reason = "Review boundary unavailable or invalid. Preserve the PR and claim; do not restart agent work."
                 });
             }
-            if (review.CandidateCommit != state.CandidateCommit || review.State != "open")
+            if (review.CandidateCommit != state.CandidateCommit)
                 return await Save(state with
                 {
                     State = "needsAttention",
-                    Reason = "Published PR head or state changed outside this mission. Reconciliation is required."
+                    Reason = "Published PR head changed outside this mission. Reconciliation is required."
                 });
+            if (review.State == "merged")
+                return await Save(state with { State = "completed", Reason = "Owned verified candidate merged. Workflow completion criterion satisfied." });
+            if (review.State == "closed")
+                return await Save(state with { State = "blocked", Reason = "Owned PR closed without merging. The issue claim is retained; the queue cannot advance." });
+            if (review.State != "open")
+                return await Save(state with { State = "needsAttention", Reason = "Unrecognized PR state. Retain ownership and reconcile." });
             var trusted = review.Feedback.Where(item => reviewers.Contains(item.Actor, StringComparer.OrdinalIgnoreCase) &&
                 item.CandidateCommit == state.CandidateCommit).ToArray();
             var latestReviews = trusted.Where(item => item.Kind is "approved" or "changesRequested" or "dismissed")
@@ -86,9 +92,11 @@ public sealed class DevelopmentMissionRunner(IDevelopmentMissionRepository repos
                 .DistinctBy(item => item.Id, StringComparer.Ordinal).ToArray();
             if (feedback.Length == 0 && !latestReviews.Any(item => item.Kind == "changesRequested") &&
                 latestReviews.Any(item => item.Kind == "approved"))
-                return await Save(state with { State = "approved", Reason = "Trusted review approved the current candidate. No merge was performed." });
+                return state.State == "awaitingMerge" ? state : await Save(state with
+                { State = "awaitingMerge", Reason = "Trusted review approved the current candidate. Waiting for merge; Factory does not merge." });
             if (feedback.Length == 0)
-                return state;
+                return state.State == "awaitingApproval" ? state : await Save(state with
+                { State = "awaitingApproval", Reason = "Current-head approval is no longer present. Waiting for trusted review." });
             if (feedback.Length > 64 || state.ProcessedFeedback.Length + feedback.Length > 256)
                 return await Save(state with { State = "blocked", Reason = "Review feedback exceeds the bounded mission intake limit." });
             state = await Save(state with
